@@ -1,0 +1,16 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Streamlit config (if you don't want to expose themes, but usually fine)
+# .streamlit/
+
+# Archivos de SO
+.DS_Store
+Thumbs.db
+
+# Output extension build
+release_extension_v*.zip
