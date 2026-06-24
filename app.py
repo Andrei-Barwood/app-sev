@@ -544,28 +544,54 @@ elif nav == "🏗️ Diseño Malla BT y Reporte":
         profundidad = st.number_input("Profundidad de enterramiento (h en m)", min_value=0.1, value=0.6)
         
         n_barras = st.number_input("Cantidad de barras/electrodos verticales", min_value=0, value=0, step=1)
+        longitud_barra = st.number_input("Longitud de cada barra vertical (m)", min_value=0.5, value=1.5) if n_barras > 0 else 0.0
+        diametro_barra = st.number_input("Diámetro de las barras (mm)", min_value=1.0, value=16.0) if n_barras > 0 else 0.0
+        
+        R_objetivo = st.number_input("Resistencia Objetivo (Ω)", min_value=0.1, value=10.0, help="Ej: < 10 Ω o < 5 Ω para BT")
         
         # Cálculos Malla
         st.markdown("---")
-        st.markdown("**Cálculos de la Malla**")
+        st.markdown("**Cálculos y Resultados de la Malla**")
         
-        n_L = int(ancho / separacion) + 1
-        n_W = int(largo / separacion) + 1
-        Lt = n_L * largo + n_W * ancho
-        area = largo * ancho
-        
-        st.write(f"- Conductores paralelos al largo: **{n_L}**")
-        st.write(f"- Conductores paralelos al ancho: **{n_W}**")
-        st.write(f"- Longitud total de conductor horizontal ($L_T$): **{Lt:.2f} m**")
-        st.write(f"- Área de la malla ($A$): **{area:.2f} m²**")
-        
-        # Formula Laurent-Niemann
-        if Lt > 0 and area > 0:
-            Rg = rho_diseno * (1.0 / Lt + 1.0 / np.sqrt(20.0 * area))
-            st.info(f"Resistencia estimada de la Malla ($R_g$): **{Rg:.2f} Ω**\\n\\n*(Fórmula de Laurent y Niemann)*")
-        else:
-            st.error("Dimensiones inválidas para calcular Rg.")
+        if separacion > min(largo, ancho):
+            st.error(f"Error: La separación D ({separacion} m) no puede ser mayor que las dimensiones de la malla.")
             Rg = 0.0
+            n_L = n_W = 0
+            Lt = 0.0
+            area = largo * ancho
+            L_barras = 0.0
+        else:
+            n_L = int(ancho / separacion) + 1
+            n_W = int(largo / separacion) + 1
+            Lt = n_L * largo + n_W * ancho
+            area = largo * ancho
+            L_barras = n_barras * longitud_barra
+            
+            # Formula Laurent-Niemann
+            if Lt > 0 and area > 0:
+                Rg = rho_diseno / (4.0 * np.sqrt(area)) + rho_diseno / Lt
+                
+                # Formula con corrección por profundidad (Aproximación Sverak simple)
+                Rg_prof = rho_diseno * (1.0 / Lt + 1.0 / np.sqrt(20.0 * area) * (1 + 1.0 / (1 + profundidad * np.sqrt(20.0 / area))))
+                
+                col_m1, col_m2 = st.columns(2)
+                col_m1.metric("Área de la Malla (A)", f"{area:.2f} m²")
+                col_m1.metric("Longitud Horizontal ($L_T$)", f"{Lt:.2f} m")
+                col_m2.metric("Longitud Vertical", f"{L_barras:.2f} m")
+                col_m2.metric("Resistencia Calculada ($R_g$)", f"{Rg:.2f} Ω", 
+                              f"{Rg - R_objetivo:.2f} Ω vs Obj", 
+                              delta_color="inverse")
+                
+                if Rg <= R_objetivo:
+                    st.success(f"✅ ¡El diseño CUMPLE con el objetivo de {R_objetivo} Ω!")
+                else:
+                    st.error(f"❌ El diseño NO CUMPLE con el objetivo de {R_objetivo} Ω. Reduce la resistividad, aumenta el área o agrega conductor.")
+                    
+                st.caption("Fórmula usada: $R_g \\approx \\frac{\\rho}{4 \\sqrt{A}} + \\frac{\\rho}{L_T}$ (Laurent-Niemann simplificada)")
+                st.caption(f"Nota: Alternativa teórica con corrección por profundidad daría: {Rg_prof:.2f} Ω")
+            else:
+                st.error("Dimensiones inválidas para calcular Rg.")
+                Rg = 0.0
             
         # Dibujar malla
         fig_malla = go.Figure()
@@ -660,14 +686,15 @@ La resistividad del terreno representa la oposición del suelo al paso de corrie
 - **Dimensiones de la malla:** {largo} m x {ancho} m (Área: {area:.2f} m²)
 - **Separación entre conductores (D):** {separacion} m
 - **Profundidad de enterramiento:** {profundidad} m
-- **Cantidad de barras verticales:** {n_barras}
+- **Barras verticales:** {n_barras} barras de {longitud_barra} m (Diámetro: {diametro_barra} mm)
 - **Longitud total estimada de conductor horizontal ($L_T$):** {Lt:.2f} m
-- **Resistencia calculada ($R_g$) (Fórmula de Laurent y Niemann):** **{Rg:.2f} Ω**
+- **Resistencia objetivo:** {R_objetivo:.2f} Ω
+- **Resistencia calculada ($R_g$) (Laurent-Niemann simplificada):** **{Rg:.2f} Ω**
 
 ## 4.10 Conclusiones técnicas
 - El transformador de {potencia_str} {unidad_p} fue adecuadamente dimensionado y evaluado mediante las corrientes de operación calculadas ({I_pri:.2f} A en primario y {I_sec:.2f} A en secundario).
 - La resistividad medida del terreno (ρ={rho_diseno:.2f} Ω·m) afecta de forma directa las dimensiones del sistema de puesta a tierra.
-- Con el arreglo de retícula propuesto de {largo}x{ancho}m, se logra una resistencia teórica de puesta a tierra de {Rg:.2f} Ω.
-- Como limitación de diseño, se utiliza una fórmula simplificada (Laurent-Niemann) que asume un terreno homogéneo con la resistividad adoptada.
+- Con el arreglo de retícula propuesto de {largo}x{ancho}m, se logra una resistencia teórica de puesta a tierra de {Rg:.2f} Ω, lo cual {"CUMPLE" if Rg <= R_objetivo else "NO CUMPLE"} con el objetivo de {R_objetivo:.2f} Ω.
+- Como limitación de diseño, se utiliza una fórmula simplificada que asume un terreno homogéneo con la resistividad adoptada.
 """
         st.text_area("Copia el siguiente texto para tu informe:", value=reporte, height=400)
