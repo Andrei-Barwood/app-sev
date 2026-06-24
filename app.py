@@ -222,6 +222,11 @@ elif nav == "⚡ Herramienta SEV":
                     
                     st.session_state.fixed_rho = [False] * len(st.session_state.rho)
                     st.session_state.fixed_h = [False] * len(st.session_state.h)
+                    
+                    # Forzar a los widgets a tomar los nuevos valores limpiando su estado interno
+                    for k in list(st.session_state.keys()):
+                        if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
+                            del st.session_state[k]
                 
         ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()), index=suggested_index)
         if st.button("Cargar Curva de Referencia"):
@@ -230,6 +235,11 @@ elif nav == "⚡ Herramienta SEV":
                 st.session_state.h = MOONEY_ORELLANA_REF[ref_choice]["h"].copy()
                 st.session_state.fixed_rho = [False] * len(st.session_state.rho)
                 st.session_state.fixed_h = [False] * len(st.session_state.h)
+                
+                # Forzar a los widgets a tomar los nuevos valores
+                for k in list(st.session_state.keys()):
+                    if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
+                        del st.session_state[k]
                 st.rerun()
         st.header("3. Modelo de Capas")
         # Manejar cambios en el número de capas conservando datos si es posible
@@ -245,6 +255,12 @@ elif nav == "⚡ Herramienta SEV":
                 st.session_state.h = st.session_state.h[:n_layers-1]
                 st.session_state.fixed_rho = st.session_state.fixed_rho[:n_layers]
                 st.session_state.fixed_h = st.session_state.fixed_h[:n_layers-1]
+            
+            # Limpiar widgets obsoletos
+            for k in list(st.session_state.keys()):
+                if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
+                    del st.session_state[k]
+            st.rerun()
         st.markdown("---")
         # Inputs para parámetros
         for i in range(n_layers):
@@ -271,6 +287,14 @@ elif nav == "⚡ Herramienta SEV":
         if st.session_state.get('auto_optimize_pending', False):
             run_opt = True
             st.session_state['auto_optimize_pending'] = False # Limpiar la bandera
+            
+        if 'opt_success_msg' in st.session_state:
+            st.success(st.session_state['opt_success_msg'])
+            del st.session_state['opt_success_msg']
+        if 'opt_error_msg' in st.session_state:
+            st.error(st.session_state['opt_error_msg'])
+            del st.session_state['opt_error_msg']
+            
         st.markdown("---")
         st.markdown(
             "<div style='text-align: center; color: #63627C; font-size: 0.9em;'>"
@@ -298,11 +322,19 @@ elif nav == "⚡ Herramienta SEV":
                     st.session_state.fixed_rho, st.session_state.fixed_h,
                     use_global=use_global
                 )
-                st.session_state.rho = best_rho
-                st.session_state.h = best_h
-                st.success(f"Optimización finalizada. RMSE: {rmse:.2f} | R²: {r2:.4f}")
+                st.session_state.rho = list(best_rho)
+                st.session_state.h = list(best_h)
+                
+                # Actualizar el estado de los widgets para que la UI los muestre
+                for k in list(st.session_state.keys()):
+                    if k.startswith("rho_") or k.startswith("h_"):
+                        del st.session_state[k]
+                
+                st.session_state['opt_success_msg'] = f"Optimización finalizada. RMSE: {rmse:.2f} | R²: {r2:.4f}"
+                st.rerun()
             except Exception as e:
-                st.error(f"Error durante optimización: {e}")
+                st.session_state['opt_error_msg'] = f"Error en la optimización: {e}"
+                st.rerun()
     # Calcular curva teórica con los parámetros actuales
     rho_calc = calc_rho_a(L_med, st.session_state.rho, st.session_state.h)
     # === PLOT ===
