@@ -204,8 +204,22 @@ elif nav == "⚡ Herramienta SEV":
                 
                 # Auto-cargar la curva si venimos de un archivo nuevo
                 if st.session_state.get('auto_optimize_pending', False):
-                    st.session_state.rho = MOONEY_ORELLANA_REF[suggested_key]["rho"].copy()
-                    st.session_state.h = MOONEY_ORELLANA_REF[suggested_key]["h"].copy()
+                    # Inyectar una estimación inteligente basada en los datos reales
+                    # para que el Refinamiento Local comience MUY cerca de la solución real
+                    rho1_smart = max(0.1, float(smoothed[0]))
+                    rho3_smart = max(0.1, float(smoothed[-1]))
+                    
+                    if "Tipo K" in suggested_key:
+                        rho2_smart = max(0.1, float(np.max(smoothed)) * 1.5)
+                    elif "Tipo H" in suggested_key:
+                        rho2_smart = max(0.1, float(np.min(smoothed)) * 0.5)
+                    else:
+                        rho2_smart = max(0.1, float((rho1_smart + rho3_smart) / 2.0))
+                        
+                    st.session_state.rho = [rho1_smart, rho2_smart, rho3_smart]
+                    # Espesores iniciales razonables aproximados de L
+                    st.session_state.h = [max(0.1, float(L_med[1])), max(0.1, float(L_med[-3]))] if len(L_med) > 4 else [2.0, 10.0]
+                    
                     st.session_state.fixed_rho = [False] * len(st.session_state.rho)
                     st.session_state.fixed_h = [False] * len(st.session_state.h)
                 
