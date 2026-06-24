@@ -132,9 +132,17 @@ elif nav == "⚡ Herramienta SEV":
                     # Eliminamos filas que hayan resultado en NaN (nulos o strings inválidos)
                     df_upload = df_upload.dropna(subset=[col1, col2])
                     
+                    if len(df_upload) == 0:
+                        raise ValueError(f"Las columnas detectadas ({col1} y {col2}) no tienen datos en las mismas filas, o los datos son inválidos. Asegúrate de que L y Rho estén lado a lado.")
+                    
                     L_med = df_upload[col1].values
                     rho_med = df_upload[col2].values
                     st.success("Archivo cargado correctamente.")
+                    
+                    # Flujo Automático: Si es un archivo nuevo, marcamos para auto-optimizar
+                    if st.session_state.get('last_uploaded_csv') != uploaded_file.name:
+                        st.session_state['last_uploaded_csv'] = uploaded_file.name
+                        st.session_state['auto_optimize_pending'] = True
                 except Exception as e:
                     st.error(f"Error al leer el archivo: {e}")
         elif data_source == "Ingreso manual":
@@ -193,6 +201,13 @@ elif nav == "⚡ Herramienta SEV":
                 suggested_index = keys_list.index(suggested_key)
                 st.info(f"💡 **Sugerencia de la App:** Según la forma de tus datos, tu terreno parece coincidir con una curva **{suggested_key.split(' - ')[1]}**.")
                 
+                # Auto-cargar la curva si venimos de un archivo nuevo
+                if st.session_state.get('auto_optimize_pending', False):
+                    st.session_state.rho = MOONEY_ORELLANA_REF[suggested_key]["rho"].copy()
+                    st.session_state.h = MOONEY_ORELLANA_REF[suggested_key]["h"].copy()
+                    st.session_state.fixed_rho = [False] * len(st.session_state.rho)
+                    st.session_state.fixed_h = [False] * len(st.session_state.h)
+                
         ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()), index=suggested_index)
         if st.button("Cargar Curva de Referencia"):
             if ref_choice != "Personalizado":
@@ -233,7 +248,14 @@ elif nav == "⚡ Herramienta SEV":
                     st.write("h = ∞")
         st.header("4. Optimización")
         opt_method = st.radio("Método de Ajuste:", ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"], help="El Refinamiento Local usa tus valores manuales como punto de partida. La Búsqueda Global ignora tus valores y explora desde cero.")
+        
+        # Botón normal de ajuste
         run_opt = st.button("Ajustar", type="primary")
+        
+        # Disparo automático si viene de una nueva carga de archivo
+        if st.session_state.get('auto_optimize_pending', False):
+            run_opt = True
+            st.session_state['auto_optimize_pending'] = False # Limpiar la bandera
         st.markdown("---")
         st.markdown(
             "<div style='text-align: center; color: #63627C; font-size: 0.9em;'>"
