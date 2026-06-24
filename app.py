@@ -181,16 +181,19 @@ elif nav == "⚡ Herramienta SEV":
             st.write(f"**Capa {i+1}**")
             col1, col2 = st.columns(2)
             with col1:
-                st.session_state.rho[i] = st.number_input(f"ρ_{i+1} (Ω·m)", min_value=0.1, value=float(st.session_state.rho[i]), key=f"rho_{i}")
+                val_rho = max(0.1, float(st.session_state.rho[i]))
+                st.session_state.rho[i] = st.number_input(f"ρ_{i+1} (Ω·m)", min_value=0.1, value=val_rho, key=f"rho_{i}")
                 st.session_state.fixed_rho[i] = st.checkbox("Fijar ρ", value=st.session_state.fixed_rho[i], key=f"frho_{i}")
             with col2:
                 if i < n_layers - 1:
-                    st.session_state.h[i] = st.number_input(f"h_{i+1} (m)", min_value=0.1, value=float(st.session_state.h[i]), key=f"h_{i}")
+                    val_h = max(0.1, float(st.session_state.h[i]))
+                    st.session_state.h[i] = st.number_input(f"h_{i+1} (m)", min_value=0.1, value=val_h, key=f"h_{i}")
                     st.session_state.fixed_h[i] = st.checkbox("Fijar h", value=st.session_state.fixed_h[i], key=f"fh_{i}")
                 else:
                     st.write("h = ∞")
         st.header("4. Optimización")
-        run_opt = st.button("Ajustar automáticamente", type="primary")
+        opt_method = st.radio("Método de Ajuste:", ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"], help="El Refinamiento Local usa tus valores manuales como punto de partida. La Búsqueda Global ignora tus valores y explora desde cero.")
+        run_opt = st.button("Ajustar", type="primary")
         st.markdown("---")
         st.markdown(
             "<div style='text-align: center; color: #63627C; font-size: 0.9em;'>"
@@ -211,10 +214,12 @@ elif nav == "⚡ Herramienta SEV":
     if run_opt:
         with st.spinner("Optimizando modelo... (esto puede tardar unos segundos)"):
             try:
+                use_global = (opt_method == "Búsqueda Global (Automático)")
                 best_rho, best_h, rmse, r2 = run_optimization(
                     L_med, rho_med, 
                     st.session_state.rho, st.session_state.h,
-                    st.session_state.fixed_rho, st.session_state.fixed_h
+                    st.session_state.fixed_rho, st.session_state.fixed_h,
+                    use_global=use_global
                 )
                 st.session_state.rho = best_rho
                 st.session_state.h = best_h

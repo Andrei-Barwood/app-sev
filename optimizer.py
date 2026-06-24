@@ -41,7 +41,7 @@ def objective_function_local(x, L_med, rho_med, n_layers, fixed_mask, fixed_valu
     residuals = np.log10(rho_calc) - np.log10(rho_med)
     return residuals
 
-def run_optimization(L_med, rho_med, initial_rho, initial_h, fixed_rho, fixed_h):
+def run_optimization(L_med, rho_med, initial_rho, initial_h, fixed_rho, fixed_h, use_global=False):
     """
     Ejecuta el proceso de optimización en dos pasos.
     
@@ -78,17 +78,36 @@ def run_optimization(L_med, rho_med, initial_rho, initial_h, fixed_rho, fixed_h)
         r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         return initial_rho, initial_h, rmse, r2
     
-    # === Optimización Local (Least Squares) ===
-    # Usamos directamente los valores iniciales provistos (o modificados por el usuario)
-    # Esto asegura que si el usuario hace un ajuste manual para acercar la curva, el algoritmo
-    # lo respete y busque la solución exacta a partir de ahí.
-    
+    # === PASO 1: Búsqueda Global (Opcional) ===
+    if use_global:
+        bounds = []
+        for val in free_params_initial:
+            bounds.append((val * 0.01, val * 100.0))
+            
+        from scipy.optimize import differential_evolution
+        result_global = differential_evolution(
+            objective_function_global,
+            bounds=bounds,
+            args=(L_med, rho_med, n_layers, fixed_mask, fixed_values),
+            strategy='best1bin',
+            maxiter=1000,
+            popsize=15,
+            tol=1e-3,
+            mutation=(0.5, 1.0),
+            recombination=0.7,
+            disp=False
+        )
+        x0_local = result_global.x
+    else:
+        x0_local = free_params_initial
+
+    # === PASO 2: Optimización Local (Least Squares) ===
     # Límites estrictos mayores a 0 para resistividad y espesor
     local_bounds = (np.zeros(n_free) + 1e-5, np.inf)
     
     result_local = least_squares(
         objective_function_local,
-        x0=free_params_initial,
+        x0=x0_local,
         bounds=local_bounds,
         args=(L_med, rho_med, n_layers, fixed_mask, fixed_values),
         method='trf',
