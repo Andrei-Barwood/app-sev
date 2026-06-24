@@ -110,14 +110,22 @@ elif nav == "⚡ Herramienta SEV":
                     else:
                         df_upload = pd.read_excel(uploaded_file)
                         
-                    if df_upload.shape[1] < 2:
-                        raise ValueError("El archivo debe contener al menos dos columnas.")
+                    # Buscamos inteligentemente las dos primeras columnas que contengan datos numéricos reales
+                    # Esto ignora columnas vacías al principio (muy común al exportar desde Excel)
+                    valid_cols = []
+                    for col in df_upload.columns:
+                        temp_col = pd.to_numeric(df_upload[col].astype(str).str.replace(',', '.'), errors='coerce')
+                        if temp_col.notna().sum() > 0:
+                            valid_cols.append(col)
+                        if len(valid_cols) == 2:
+                            break
+                            
+                    if len(valid_cols) < 2:
+                        raise ValueError("No se encontraron dos columnas con datos numéricos válidos en el archivo.")
                         
-                    # Tomamos las dos primeras columnas
-                    col1, col2 = df_upload.columns[0], df_upload.columns[1]
+                    col1, col2 = valid_cols[0], valid_cols[1]
                     
                     # Limpiamos strings, reemplazamos comas decimales por puntos y forzamos a numérico
-                    # errors='coerce' convertirá cualquier string mal formado (ej. ';;168') a NaN
                     df_upload[col1] = pd.to_numeric(df_upload[col1].astype(str).str.replace(',', '.'), errors='coerce')
                     df_upload[col2] = pd.to_numeric(df_upload[col2].astype(str).str.replace(',', '.'), errors='coerce')
                     
