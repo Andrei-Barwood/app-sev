@@ -96,26 +96,62 @@ elif nav == "⚡ Herramienta SEV":
             if uploaded_file is not None:
                 try:
                     if uploaded_file.name.endswith('.csv'):
-                        df_upload = pd.read_csv(uploaded_file)
+                        try:
+                            # Intentamos detectar automáticamente el separador
+                            df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
+                        except Exception:
+                            uploaded_file.seek(0)
+                            df_upload = pd.read_csv(uploaded_file, sep=';')
+                            
+                        # Si todo quedó en una sola columna, forzamos separador ';'
+                        if df_upload.shape[1] == 1:
+                            uploaded_file.seek(0)
+                            df_upload = pd.read_csv(uploaded_file, sep=';')
                     else:
                         df_upload = pd.read_excel(uploaded_file)
-                    # Asumimos que la primera columna es L y la segunda Rho_med
-                    L_med = df_upload.iloc[:, 0].values
-                    rho_med = df_upload.iloc[:, 1].values
+                        
+                    if df_upload.shape[1] < 2:
+                        raise ValueError("El archivo debe contener al menos dos columnas.")
+                        
+                    # Tomamos las dos primeras columnas
+                    col1, col2 = df_upload.columns[0], df_upload.columns[1]
+                    
+                    # Limpiamos strings, reemplazamos comas decimales por puntos y forzamos a numérico
+                    # errors='coerce' convertirá cualquier string mal formado (ej. ';;168') a NaN
+                    df_upload[col1] = pd.to_numeric(df_upload[col1].astype(str).str.replace(',', '.'), errors='coerce')
+                    df_upload[col2] = pd.to_numeric(df_upload[col2].astype(str).str.replace(',', '.'), errors='coerce')
+                    
+                    # Eliminamos filas que hayan resultado en NaN (nulos o strings inválidos)
+                    df_upload = df_upload.dropna(subset=[col1, col2])
+                    
+                    L_med = df_upload[col1].values
+                    rho_med = df_upload[col2].values
                     st.success("Archivo cargado correctamente.")
                 except Exception as e:
                     st.error(f"Error al leer el archivo: {e}")
         elif data_source == "Ingreso manual":
             st.write("Formato: L, Rho_med (un punto por línea)")
-            manual_data = st.text_area("Datos", "1.0, 100\\n3.0, 80\\n10.0, 50\\n30.0, 60\\n100.0, 120")
+            manual_data = st.text_area("Datos", "1.0, 100\n3.0, 80\n10.0, 50\n30.0, 60\n100.0, 120")
             try:
-                lines = manual_data.strip().split('\\n')
-                data = [list(map(float, line.split(','))) for line in lines if line.strip()]
-                data = np.array(data)
+                import re
+                lines = manual_data.strip().split('\n')
+                parsed_data = []
+                for line in lines:
+                    # Extraer todos los números de la línea (soporta puntos o comas decimales)
+                    nums = re.findall(r'[-+]?\d+(?:[.,]\d+)?', line)
+                    if len(nums) >= 2:
+                        val1 = float(nums[0].replace(',', '.'))
+                        val2 = float(nums[1].replace(',', '.'))
+                        parsed_data.append([val1, val2])
+                
+                if len(parsed_data) == 0:
+                    raise ValueError("No se encontraron números válidos")
+                    
+                data = np.array(parsed_data)
                 L_med = data[:, 0]
                 rho_med = data[:, 1]
-            except Exception:
-                st.error("Error en formato de datos. Usa 'L, Rho_med'.")
+            except Exception as e:
+                st.error("Error en formato de datos. Asegúrate de ingresar números válidos para L y Rho.")
         st.header("2. Curvas de Referencia (Mooney-Orellana)")
         ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()))
         if st.button("Cargar Curva de Referencia"):

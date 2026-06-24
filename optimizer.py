@@ -78,38 +78,17 @@ def run_optimization(L_med, rho_med, initial_rho, initial_h, fixed_rho, fixed_h)
         r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         return initial_rho, initial_h, rmse, r2
     
-    # Definir límites (bounds) basados en el valor inicial (ej: 0.1x a 10x)
-    # Permite un amplio rango para differential_evolution
-    bounds = []
-    for val in free_params_initial:
-        bounds.append((val * 0.01, val * 100.0))
-        
-    # === PASO 1: Optimización Global (Differential Evolution) ===
-    # differential_evolution es estocástico y explora bien el espacio
-    result_global = differential_evolution(
-        objective_function_global,
-        bounds=bounds,
-        args=(L_med, rho_med, n_layers, fixed_mask, fixed_values),
-        strategy='best1bin',
-        maxiter=1000,
-        popsize=15,
-        tol=1e-3,
-        mutation=(0.5, 1.0),
-        recombination=0.7,
-        seed=42, # Para reproducibilidad
-        disp=False
-    )
+    # === Optimización Local (Least Squares) ===
+    # Usamos directamente los valores iniciales provistos (o modificados por el usuario)
+    # Esto asegura que si el usuario hace un ajuste manual para acercar la curva, el algoritmo
+    # lo respete y busque la solución exacta a partir de ahí.
     
-    best_free_global = result_global.x
-    
-    # === PASO 2: Refinamiento Local (Least Squares) ===
-    # Usamos los resultados de la global como punto de partida local
-    # Establecemos bounds strictos de > 0
+    # Límites estrictos mayores a 0 para resistividad y espesor
     local_bounds = (np.zeros(n_free) + 1e-5, np.inf)
     
     result_local = least_squares(
         objective_function_local,
-        x0=best_free_global,
+        x0=free_params_initial,
         bounds=local_bounds,
         args=(L_med, rho_med, n_layers, fixed_mask, fixed_values),
         method='trf',
