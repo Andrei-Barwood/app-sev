@@ -35,7 +35,7 @@ if 'fixed_h' not in st.session_state:
 
 # === SIDEBAR Y NAVEGACIÓN ===
 with st.sidebar:
-    nav = st.radio("Navegación", ["📚 Tutorial y Guía de Uso", "⚡ Herramienta SEV"])
+    nav = st.radio("Navegación", ["📚 Tutorial y Guía de Uso", "⚡ Herramienta SEV", "🏗️ Diseño Malla BT y Reporte"])
     st.markdown("---")
 
 if nav == "📚 Tutorial y Guía de Uso":
@@ -451,3 +451,223 @@ elif nav == "⚡ Herramienta SEV":
         font=dict(color='#63627C')
     )
     st.plotly_chart(fig_bar, use_container_width=True)
+
+elif nav == "🏗️ Diseño Malla BT y Reporte":
+    st.header("🏗️ Diseño Malla BT y Reporte")
+    st.markdown("Completa los datos de tu transformador y malla para generar el reporte técnico según la rúbrica de CFT Los Ríos.")
+
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("1. Datos del Transformador")
+        marca = st.text_input("Marca / Fabricante", "Ej: Rhona")
+        modelo = st.text_input("Modelo / Código Comercial", "Ej: TR-10KVA-220")
+        
+        tipo_trafo = st.text_input("Tipo de Transformador", "Monofásico de control")
+        
+        col_p, col_pu = st.columns([3, 1])
+        with col_p:
+            potencia_str = st.text_input("Potencia Aparente Nominal", "100")
+        with col_pu:
+            unidad_p = st.selectbox("Unidad S", ["VA", "kVA", "MVA"], index=0)
+            
+        col_vp, col_vpu = st.columns([3, 1])
+        with col_vp:
+            voltaje_pri_str = st.text_input("Voltaje Primario", "230")
+        with col_vpu:
+            unidad_vp = st.selectbox("Unidad Vp", ["V", "kV"], index=0)
+            
+        col_vs, col_vsu = st.columns([3, 1])
+        with col_vs:
+            voltaje_sec_str = st.text_input("Voltaje Secundario", "24")
+        with col_vsu:
+            unidad_vs = st.selectbox("Unidad Vs", ["V", "kV"], index=0)
+        
+        frecuencia = st.text_input("Frecuencia Nominal (Hz)", "50 (rango 47-63)")
+        refrigeracion = st.text_input("Tipo de Refrigeración", "Natural por aire (seco)")
+        
+        st.markdown("**Pérdidas e Información Adicional**")
+        perdidas_vacio = st.text_input("Pérdidas en Vacío (W)", "6,7")
+        perdidas_carga = st.text_input("Pérdidas en Carga (W)", "~13,8")
+        eficiencia = st.text_input("Eficiencia / Rendimiento (%)", "83")
+        aplicacion = st.text_input("Aplicación Principal", "Bobinas, PLC, señalización")
+        
+        # Cálculos de corriente
+        st.markdown("---")
+        st.markdown("**Cálculos Eléctricos Automáticos**")
+        fase_calc = st.radio("Sistema para cálculos eléctricos", ["Monofásico/Bifásico", "Trifásico"])
+        
+        def extract_float(text):
+            import re
+            match = re.search(r"[-+]?\d*[.,]?\d+", text)
+            if match:
+                return float(match.group().replace(',', '.'))
+            return 0.0
+            
+        S_val = extract_float(potencia_str)
+        if unidad_p == "kVA": S_va = S_val * 1000.0
+        elif unidad_p == "MVA": S_va = S_val * 1000000.0
+        else: S_va = S_val
+        
+        V_pri_val = extract_float(voltaje_pri_str)
+        V_pri = V_pri_val * 1000.0 if unidad_vp == "kV" else V_pri_val
+        
+        V_sec_val = extract_float(voltaje_sec_str)
+        V_sec = V_sec_val * 1000.0 if unidad_vs == "kV" else V_sec_val
+        
+        if V_pri > 0:
+            I_pri = S_va / (np.sqrt(3) * V_pri) if fase_calc == "Trifásico" else S_va / V_pri
+        else: I_pri = 0.0
+        
+        if V_sec > 0:
+            I_sec = S_va / (np.sqrt(3) * V_sec) if fase_calc == "Trifásico" else S_va / V_sec
+        else: I_sec = 0.0
+            
+        st.info(f"Corriente Nominal Primaria: **{I_pri:.2f} A**\\n\\nCorriente Nominal Secundaria: **{I_sec:.2f} A**")
+        
+    with col2:
+        st.subheader("2. Diseño Simplificado de Malla BT")
+        
+        # Extraer resistividad de diseño
+        if 'rho' in st.session_state and len(st.session_state.rho) > 0:
+            rho_def = float(st.session_state.rho[0])
+            st.success("✅ Datos SEV detectados. Se ha importado la resistividad del terreno (Capa 1).")
+        else:
+            rho_def = 100.0
+            st.warning("⚠️ No se detectaron datos SEV. Ingresa la resistividad manualmente.")
+            
+        rho_diseno = st.number_input("Resistividad de Diseño (ρ en Ω·m)", min_value=0.1, value=rho_def, help="Valor adoptado a partir del modelo SEV (usualmente la Capa 1).")
+        
+        largo = st.number_input("Largo de la malla (L en m)", min_value=1.0, value=5.0)
+        ancho = st.number_input("Ancho de la malla (W en m)", min_value=1.0, value=5.0)
+        separacion = st.number_input("Separación entre conductores (D en m)", min_value=0.5, value=1.0)
+        profundidad = st.number_input("Profundidad de enterramiento (h en m)", min_value=0.1, value=0.6)
+        
+        n_barras = st.number_input("Cantidad de barras/electrodos verticales", min_value=0, value=0, step=1)
+        
+        # Cálculos Malla
+        st.markdown("---")
+        st.markdown("**Cálculos de la Malla**")
+        
+        n_L = int(ancho / separacion) + 1
+        n_W = int(largo / separacion) + 1
+        Lt = n_L * largo + n_W * ancho
+        area = largo * ancho
+        
+        st.write(f"- Conductores paralelos al largo: **{n_L}**")
+        st.write(f"- Conductores paralelos al ancho: **{n_W}**")
+        st.write(f"- Longitud total de conductor horizontal ($L_T$): **{Lt:.2f} m**")
+        st.write(f"- Área de la malla ($A$): **{area:.2f} m²**")
+        
+        # Formula Laurent-Niemann
+        if Lt > 0 and area > 0:
+            Rg = rho_diseno * (1.0 / Lt + 1.0 / np.sqrt(20.0 * area))
+            st.info(f"Resistencia estimada de la Malla ($R_g$): **{Rg:.2f} Ω**\\n\\n*(Fórmula de Laurent y Niemann)*")
+        else:
+            st.error("Dimensiones inválidas para calcular Rg.")
+            Rg = 0.0
+            
+        # Dibujar malla
+        fig_malla = go.Figure()
+        
+        # Lineas a lo largo de W (horizontales en el grafico, de x=0 a L)
+        for i in range(n_L):
+            y_pos = i * separacion
+            fig_malla.add_trace(go.Scatter(x=[0, largo], y=[y_pos, y_pos], mode='lines', line=dict(color='orange', width=2)))
+            
+        # Lineas a lo largo de L (verticales en el grafico, de y=0 a W)
+        for j in range(n_W):
+            x_pos = j * separacion
+            fig_malla.add_trace(go.Scatter(x=[x_pos, x_pos], y=[0, ancho], mode='lines', line=dict(color='orange', width=2)))
+            
+        fig_malla.update_layout(
+            title="Esquema de la Malla de Puesta a Tierra",
+            xaxis_title="Largo (m)",
+            yaxis_title="Ancho (m)",
+            width=400,
+            height=400,
+            showlegend=False,
+            yaxis=dict(scaleanchor="x", scaleratio=1), # Cuadricula perfecta
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0.05)',
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_malla, use_container_width=True)
+
+    st.markdown("---")
+    st.header("3. Generación del Reporte Técnico")
+    st.markdown("Haz clic en el botón para compilar toda la información y generar el reporte en formato texto/markdown para copiar a tu procesador de textos.")
+    
+    if st.button("Generar Reporte", type="primary"):
+        # Construir reporte
+        capas_str = ""
+        if 'rho' in st.session_state and len(st.session_state.rho) > 0:
+            for i, (r, h) in enumerate(zip(st.session_state.rho, st.session_state.h)):
+                capas_str += f"- Capa {i+1}: ρ = {r:.2f} Ω·m, h = {h:.2f} m\\n"
+            if len(st.session_state.rho) > len(st.session_state.h):
+                capas_str += f"- Capa {len(st.session_state.rho)}: ρ = {st.session_state.rho[-1]:.2f} Ω·m, h = ∞\\n"
+            
+        sqrt_3_str = "(√3 · " if tipo_trafo == "Trifásico" else ""
+        close_paren_str = ")" if tipo_trafo == "Trifásico" else ""
+        sqrt_3_str = "(√3 · " if fase_calc == "Trifásico" else ""
+        close_paren_str = ")" if fase_calc == "Trifásico" else ""
+        
+        reporte = f"""# REPORTE TÉCNICO
+        
+## 4.3 Identificación del transformador comercial
+- **Marca o fabricante:** {marca}
+- **Modelo o código comercial:** {modelo}
+- **Tipo de transformador:** {tipo_trafo}
+- **Fuente de información:** Catálogo de fabricante / Ficha técnica
+
+## 4.4 Datos técnicos del transformador
+- **Potencia aparente nominal:** {potencia_str} {unidad_p}
+- **Voltaje primario:** {voltaje_pri_str} {unidad_vp}
+- **Voltaje secundario:** {voltaje_sec_str} {unidad_vs}
+- **Frecuencia nominal:** {frecuencia}
+- **Tipo de refrigeración:** {refrigeracion}
+- **Eficiencia:** {eficiencia}%
+- **Pérdidas en vacío:** {perdidas_vacio}
+- **Pérdidas en carga:** {perdidas_carga}
+- **Aplicación principal:** {aplicacion}
+
+## 4.5 Cálculos eléctricos del transformador
+Fórmulas utilizadas:
+- Monofásico/Bifásico: `I = S / V`
+- Trifásico: `I = S / (√3 · V)`
+
+Cálculos:
+- **Corriente Nominal Primaria:** {S_va} VA / {sqrt_3_str}{V_pri} V{close_paren_str} = **{I_pri:.2f} A**
+- **Corriente Nominal Secundaria:** {S_va} VA / {sqrt_3_str}{V_sec} V{close_paren_str} = **{I_sec:.2f} A**
+
+## 4.6 Aplicación técnica del transformador
+- **Función principal:** Transferir energía eléctrica alterando los niveles de tensión (reductor).
+- **Importancia tensión:** Permite conectar equipos BT a la red ({voltaje_pri_str}{unidad_vp} a {voltaje_sec_str}{unidad_vs}).
+- **Potencia aparente ({potencia_str} {unidad_p}):** Define la carga máxima que puede soportar sin daño térmico.
+
+## 4.7 Interpretación de pérdidas y refrigeración
+- La diferencia entre pérdidas en carga ({perdidas_carga}) y vacío ({perdidas_vacio}) radica en que las de vacío (en el núcleo de hierro) son constantes mientras el equipo está energizado, y las de carga (en el cobre/devanados) varían con el cuadrado de la corriente consumida.
+- El sistema de refrigeración ({refrigeracion}) es vital para disipar el calor generado por estas pérdidas y mantener la temperatura dentro de márgenes seguros para el aislamiento térmico.
+
+## 4.8 Interpretación de resistividad del terreno (SEV)
+Resultados obtenidos de la optimización del modelo IPI2Win/App:
+{capas_str if capas_str else "- No se detectaron datos SEV en la sesión actual."}
+
+La resistividad del terreno representa la oposición del suelo al paso de corriente eléctrica. Este dato es absolutamente clave para el diseño, ya que un suelo altamente resistivo obliga a construir una malla de mayores dimensiones (más conductor) para alcanzar el nivel de resistencia seguro normativo.
+
+## 4.9 Diseño simplificado de malla de puesta a tierra BT
+- **Resistividad de diseño adoptada (ρ):** {rho_diseno:.2f} Ω·m
+- **Dimensiones de la malla:** {largo} m x {ancho} m (Área: {area:.2f} m²)
+- **Separación entre conductores (D):** {separacion} m
+- **Profundidad de enterramiento:** {profundidad} m
+- **Cantidad de barras verticales:** {n_barras}
+- **Longitud total estimada de conductor horizontal ($L_T$):** {Lt:.2f} m
+- **Resistencia calculada ($R_g$) (Fórmula de Laurent y Niemann):** **{Rg:.2f} Ω**
+
+## 4.10 Conclusiones técnicas
+- El transformador de {potencia_str} {unidad_p} fue adecuadamente dimensionado y evaluado mediante las corrientes de operación calculadas ({I_pri:.2f} A en primario y {I_sec:.2f} A en secundario).
+- La resistividad medida del terreno (ρ={rho_diseno:.2f} Ω·m) afecta de forma directa las dimensiones del sistema de puesta a tierra.
+- Con el arreglo de retícula propuesto de {largo}x{ancho}m, se logra una resistencia teórica de puesta a tierra de {Rg:.2f} Ω.
+- Como limitación de diseño, se utiliza una fórmula simplificada (Laurent-Niemann) que asume un terreno homogéneo con la resistividad adoptada.
+"""
+        st.text_area("Copia el siguiente texto para tu informe:", value=reporte, height=400)
