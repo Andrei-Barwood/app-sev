@@ -92,21 +92,22 @@ elif nav == "⚡ Herramienta SEV":
             num_pts = int(decades * pts_dec) + 1
             L_med = np.logspace(np.log10(l_min), np.log10(l_max), num_pts)
         elif data_source == "Cargar archivo (CSV/Excel)":
-            uploaded_file = st.file_uploader("Sube tu archivo", type=['csv', 'xlsx', 'xls'])
+            uploaded_file = st.file_uploader("Sube tu archivo", type=['csv', 'txt', 'xlsx', 'xls'])
             if uploaded_file is not None:
                 try:
-                    if uploaded_file.name.endswith('.csv'):
+                    if uploaded_file.name.endswith('.csv') or uploaded_file.name.endswith('.txt'):
                         try:
-                            # Intentamos detectar automáticamente el separador
-                            df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
+                            # 1. Intentamos leerlo asumiendo que viene de Excel español (separado por Tabuladores o Punto y Coma)
+                            # Usamos regex [;\t] para separar. Esto evita que los decimales con coma confundan al parser.
+                            df_upload = pd.read_csv(uploaded_file, sep=r'[;\t]', engine='python')
+                            
+                            # Si no se separó en al menos 2 columnas, asumimos que es un CSV tradicional (separado por comas)
+                            if df_upload.shape[1] < 2:
+                                uploaded_file.seek(0)
+                                df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
                         except Exception:
                             uploaded_file.seek(0)
-                            df_upload = pd.read_csv(uploaded_file, sep=';')
-                            
-                        # Si todo quedó en una sola columna, forzamos separador ';'
-                        if df_upload.shape[1] == 1:
-                            uploaded_file.seek(0)
-                            df_upload = pd.read_csv(uploaded_file, sep=';')
+                            df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
                     else:
                         df_upload = pd.read_excel(uploaded_file)
                         
