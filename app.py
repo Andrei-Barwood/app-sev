@@ -153,7 +153,39 @@ elif nav == "⚡ Herramienta SEV":
             except Exception as e:
                 st.error("Error en formato de datos. Asegúrate de ingresar números válidos para L y Rho.")
         st.header("2. Curvas de Referencia (Mooney-Orellana)")
-        ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()))
+        
+        # Analizar los datos para sugerir el tipo de curva
+        suggested_index = 0
+        if rho_med is not None and len(rho_med) >= 4:
+            # Suavizado básico (media móvil) para ignorar picos de ruido
+            smoothed = np.convolve(rho_med, np.ones(3)/3, mode='valid') if len(rho_med) >= 5 else rho_med
+            
+            idx_max = np.argmax(smoothed)
+            idx_min = np.argmin(smoothed)
+            n = len(smoothed)
+            margin = max(1, int(n * 0.15)) # Ignoramos los extremos (15% inicial y final)
+            
+            keys_list = list(MOONEY_ORELLANA_REF.keys())
+            suggested_key = None
+            
+            # ¿Hay una montaña en el medio?
+            if margin <= idx_max <= n - 1 - margin:
+                suggested_key = "3 Capas - Tipo K (Máximo) ρ1<ρ2>ρ3"
+            # ¿Hay un valle en el medio?
+            elif margin <= idx_min <= n - 1 - margin:
+                suggested_key = "3 Capas - Tipo H (Mínimo) ρ1>ρ2<ρ3"
+            else:
+                # Si no hay picos ni valles claros en el centro, vemos la tendencia
+                if smoothed[-1] > smoothed[0]:
+                    suggested_key = "3 Capas - Tipo A (Ascendente) ρ1<ρ2<ρ3"
+                else:
+                    suggested_key = "3 Capas - Tipo Q (Descendente) ρ1>ρ2>ρ3"
+                    
+            if suggested_key and suggested_key in keys_list:
+                suggested_index = keys_list.index(suggested_key)
+                st.info(f"💡 **Sugerencia de la App:** Según la forma de tus datos, tu terreno parece coincidir con una curva **{suggested_key.split(' - ')[1]}**.")
+                
+        ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()), index=suggested_index)
         if st.button("Cargar Curva de Referencia"):
             if ref_choice != "Personalizado":
                 st.session_state.rho = MOONEY_ORELLANA_REF[ref_choice]["rho"].copy()
