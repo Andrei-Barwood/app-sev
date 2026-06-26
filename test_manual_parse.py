@@ -23,11 +23,11 @@ def test_manual_telurimetro_rows_not_zigzag():
     ]
     result = parse_manual_sev_text("\n".join(lines))
     assert result.n_lines_parsed == 17
-    assert result.format_detected == "telurómetro_multicolumna"
+    assert result.format_detected == "telurómetro_multicolumna_rho_a"
     assert result.L_med[0] == 0.6
-    assert result.rho_med[0] == 339.0
-    assert result.rho_med[-1] == 0.39
-    assert all(result.rho_med[i] > result.rho_med[i + 1] for i in range(len(result.rho_med) - 1))
+    assert result.rho_med[0] == 117.15
+    assert result.rho_med[-1] == 176.13
+    assert float(result.rho_med.max()) > float(result.rho_med.min())
 
 
 def test_manual_wrong_two_cols_warns():

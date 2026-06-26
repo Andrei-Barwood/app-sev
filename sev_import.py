@@ -67,7 +67,7 @@ N_Lectura,DISTANCIA_AB_2,a,d,R_Medidas,Ro_Calculados
 1,0.6,0.1,1,339,117.15
 2,0.7,0.2,1,236.7,178.47
 ```
-La app seleccionará `DISTANCIA_AB_2` como L y `R_Medidas` como ρ medida.
+La app seleccionará `DISTANCIA_AB_2` como L y `Ro_Calculados` como ρₐ aparente (si está presente; si no, calcula ρₐ = K·R desde `R_Medidas`).
 """
 
 
@@ -150,7 +150,16 @@ def assess_column_selection(
             )
         )
 
-    if any(x in norm_rho for x in ("calculado", "calc", "teorico", "modelo", "ajust")):
+    if norm_rho == "ro_calculados":
+        notes.append(
+            ColumnAssessment(
+                "success",
+                "ρₐ aparente del telurómetro",
+                f"`{col_rho}` es la resistividad aparente ρₐ = K·R calculada por el instrumento "
+                "a partir de la resistencia medida. Es el eje correcto de la curva SEV.",
+            )
+        )
+    elif any(x in norm_rho for x in ("calculado", "calc", "teorico", "modelo", "ajust")):
         notes.append(
             ColumnAssessment(
                 "error",
@@ -279,6 +288,9 @@ def _score_l_column(norm_name: str) -> int:
 
 
 def _score_rho_column(norm_name: str) -> int:
+    # Ro_Calculados del telurómetro = ρ_a aparente (K·R), no es un ajuste de capas.
+    if norm_name in {"ro_calculados", "rho_calculados"}:
+        return 92
     if any(x in norm_name for x in ("calculado", "calc", "teorico", "modelo", "ajust")):
         return 0
     if "error" in norm_name:
@@ -295,6 +307,49 @@ def _score_rho_column(norm_name: str) -> int:
             if token in norm_name:
                 return score
     return 0
+
+
+def _prefer_apparent_resistivity_column(
+    df: pd.DataFrame,
+    col_l: str,
+    col_rho: str,
+    norm_map: dict[str, str],
+    warnings: list[str],
+) -> str:
+    """Si el archivo trae R_Medidas (Ω) y Ro_Calculados (Ω·m), usar ρ_a para la curva SEV."""
+    ro_col = next((c for c, n in norm_map.items() if n == "ro_calculados"), None)
+    r_col = next((c for c, n in norm_map.items() if n == "r_medidas"), None)
+    if ro_col is None or col_rho == ro_col:
+        return col_rho
+    if r_col is None or col_rho != r_col:
+        return col_rho
+
+    work = df[[col_l, r_col, ro_col]].copy()
+    work[col_l] = _to_numeric_series(work[col_l])
+    work[r_col] = _to_numeric_series(work[r_col])
+    work[ro_col] = _to_numeric_series(work[ro_col])
+    work = work.dropna()
+    if work.empty:
+        return col_rho
+
+    l_vals = work[col_l].to_numpy(dtype=float)
+    r_vals = work[r_col].to_numpy(dtype=float)
+    ro_vals = work[ro_col].to_numpy(dtype=float)
+    mn = 1.0
+    if "d" in df.columns:
+        mn_series = _to_numeric_series(df["d"]).dropna()
+        if not mn_series.empty:
+            mn = float(mn_series.median())
+    k = np.pi * (l_vals**2 - (mn / 2.0) ** 2) / max(mn, 1e-6)
+    rho_from_r = k * r_vals
+    rel_err = np.abs((rho_from_r - ro_vals) / np.maximum(ro_vals, 1e-6))
+    if float(np.median(rel_err)) < 0.02:
+        warnings.append(
+            f"**{r_col}** es resistencia medida [Ω]; la curva SEV usa **{ro_col}** "
+            f"(ρ_a = K·R en Ω·m). Coincide con la fórmula Schlumberger del telurómetro."
+        )
+        return ro_col
+    return col_rho
 
 
 def _is_excluded_column(norm_name: str) -> bool:
@@ -354,6 +409,7 @@ def detect_l_rho_columns(
         best_rho = next((col for _, col in rho_candidates if col != best_l), rho_candidates[0][1])
         if best_l == best_rho:
             raise ValueError("No se pudieron distinguir columnas distintas para L y ρ medida.")
+        best_rho = _prefer_apparent_resistivity_column(df, best_l, best_rho, norm_map, warnings)
         return best_l, best_rho, "encabezado", warnings
 
     if len(numeric_cols) == 2:
@@ -577,9 +633,11 @@ def _pick_l_rho_from_numbers(nums: list[float]) -> tuple[float, float, str]:
     if len(nums) == 2:
         return nums[0], nums[1], "dos_columnas"
 
+    if len(nums) >= 6:
+        # Telurómetro: N, L, a, d, R_Medidas [Ω], Ro_Calculados [Ω·m]
+        return nums[1], nums[5], "telurómetro_multicolumna_rho_a"
     if len(nums) >= 5:
-        # Formato telurómetro: N_Lectura, DISTANCIA_AB_2, a, d, R_Medidas, [Ro_Calculados]
-        return nums[1], nums[4], "telurómetro_multicolumna"
+        return nums[1], nums[4], "telurómetro_multicolumna_resistencia"
 
     if len(nums) == 3:
         return nums[0], nums[1], "tres_columnas"

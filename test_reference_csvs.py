@@ -57,9 +57,9 @@ def test_05_csv_rejected_and_feasibility_warns():
 def test_04_csv_detects_field_columns_not_calculated():
     result = parse_sev_file(str(TESTS_DIR / "04.csv"))
     assert result.col_l == "DISTANCIA_AB_2"
-    assert result.col_rho == "R_Medidas"
-    assert result.rho_med[0] == 339.0
-    assert result.rho_med[-1] == 0.39
+    assert result.col_rho == "Ro_Calculados"
+    assert result.rho_med[0] == 117.15
+    assert result.rho_med[-1] == 176.13
 
 
 def test_05_csv_four_layers_still_rejected_but_improves_r2():

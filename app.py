@@ -36,6 +36,7 @@ from model_init import (
 )
 from sev_geometry import inspect_electrode_geometry
 from sev_report import build_sev_pdf_report
+from sev_schlumberger import build_schlumberger_verification_table, schlumberger_k_factor
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
 from sev_metrics import (
     ACCEPTANCE_ERROR_PCT,
@@ -1200,7 +1201,32 @@ elif nav == "🏗️ Diseño Malla BT y Reporte":
     st.markdown("Haz clic en el botón para compilar toda la información y generar el reporte en formato texto/markdown para copiar a tu procesador de textos.")
     
     if st.button("Generar Reporte", type="primary"):
-        # Construir reporte
+        schlumberger_str = ""
+        panel = st.session_state.get("sev_import_panel")
+        if panel and panel.get("df") is not None:
+            df_sev = panel["df"]
+            col_r = "R_Medidas" if "R_Medidas" in df_sev.columns else None
+            col_ro = panel.get("col_rho")
+            col_mn = "d" if "d" in df_sev.columns else None
+            if col_r and col_ro:
+                verif = build_schlumberger_verification_table(
+                    df_sev, panel["col_l"], col_r=col_r, col_rho=col_ro, col_mn=col_mn
+                )
+                if not verif.empty:
+                    row1 = verif.iloc[0]
+                    k1 = schlumberger_k_factor(float(row1["L (AB/2) [m]"]), float(row1["MN [m]"]))
+                    schlumberger_str = f"""
+### Fórmula Schlumberger (ρₐ aparente)
+ρₐ = K · R,  con  K = π · [(AB/2)² − (MN/2)²] / MN
+
+**Ejemplo lectura 1 (de tu tabla):**
+- AB/2 = {row1['L (AB/2) [m]']:.1f} m, MN = {row1['MN [m]']:.1f} m, R = {row1['R medida [Ω]']:.1f} Ω
+- K = π · ({row1['L (AB/2) [m]']:.1f}² − ({row1['MN [m]']:.1f}/2)²) / {row1['MN [m]']:.1f} = **{k1:.4f} m**
+- ρₐ = {k1:.4f} × {row1['R medida [Ω]']:.1f} = **{row1['ρ_a calculada [Ω·m]']:.2f} Ω·m**
+
+(La columna **R_Medidas** del telurómetro es resistencia [Ω]; la curva SEV usa **ρₐ** [Ω·m].)
+"""
+
         capas_str = ""
         if 'rho' in st.session_state and len(st.session_state.rho) > 0:
             for i, (r, h) in enumerate(zip(st.session_state.rho, st.session_state.h)):
@@ -1251,6 +1277,7 @@ Cálculos:
 - El sistema de refrigeración ({refrigeracion}) es vital para disipar el calor generado por estas pérdidas y mantener la temperatura dentro de márgenes seguros para el aislamiento térmico.
 
 ## 4.8 Interpretación de resistividad del terreno (SEV)
+{schlumberger_str}
 Resultados obtenidos de la optimización del modelo IPI2Win/App:
 {capas_str if capas_str else "- No se detectaron datos SEV en la sesión actual."}
 
