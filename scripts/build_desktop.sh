@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+PY_VER="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")"
+case "${PY_VER}" in
+  3.10|3.11|3.12) ;;
+  *)
+    echo "Error: el build desktop requiere Python 3.10, 3.11 o 3.12 (detectado: ${PY_VER})." >&2
+    echo "Ejecuta primero: ./scripts/setup_env.zsh" >&2
+    exit 1
+    ;;
+esac
+
 PLATFORM="${1:-$(uname -s | tr '[:upper:]' '[:lower:]')}"
 case "$PLATFORM" in
   darwin|macos)  OUT_NAME="app-sev-macos" ;;

@@ -1,6 +1,6 @@
 # App SEV - Sondeo Eléctrico Vertical ⚡
 
-![SEV App](https://img.shields.io/badge/Python-3.9%2B-blue)
+![SEV App](https://img.shields.io/badge/Python-3.10-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-red)
 ![License](https://img.shields.io/badge/License-Proprietary-red)
 
@@ -42,21 +42,82 @@ En la sección [Releases](https://github.com/Andrei-Barwood/app-sev/releases) en
 
 ## Instalación Local
 
-1. Clona este repositorio:
+> **Requisito:** Python **3.10** (recomendado) con [pyenv](https://github.com/pyenv/pyenv).  
+> Las versiones 3.11 y 3.12 también funcionan. **No uses Python 3.13+** para desarrollo ni builds desktop: `streamlit-desktop-app` y PyInstaller no son compatibles y el empaquetado fallará.
+
+### Opción A — Configuración automática (recomendada)
+
+El script `scripts/setup_env.zsh` hace todo el proceso por ti:
+
+1. Instala Python 3.10 con pyenv (si no lo tienes).
+2. Crea el entorno virtual `app-sev`.
+3. Lo activa en el proyecto con `pyenv local`.
+4. Instala las dependencias de `requirements.txt`.
+
+```bash
+git clone https://github.com/Andrei-Barwood/app-sev.git
+cd app-sev
+chmod +x scripts/setup_env.zsh
+./scripts/setup_env.zsh
+```
+
+Para además instalar las dependencias de build y generar el binario desktop local:
+
+```bash
+./scripts/setup_env.zsh --build
+```
+
+Cuando termine, ejecuta la aplicación:
+
+```bash
+streamlit run app.py
+```
+
+### Opción B — Configuración manual con pyenv
+
+Si prefieres hacerlo paso a paso:
+
+1. Clona el repositorio:
    ```bash
    git clone https://github.com/Andrei-Barwood/app-sev.git
    cd app-sev
    ```
-2. Crea un entorno virtual e instala las dependencias:
+
+2. Instala Python 3.10 con pyenv:
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # En Windows usa: .venv\\Scripts\\activate
+   pyenv install 3.10.16
+   ```
+
+3. Crea y activa el entorno virtual:
+   ```bash
+   pyenv virtualenv 3.10.16 app-sev
+   pyenv local app-sev
+   pyenv activate app-sev
+   ```
+
+4. Instala las dependencias:
+   ```bash
+   python -m pip install --upgrade pip
    pip install -r requirements.txt
    ```
-3. Ejecuta la aplicación:
+
+5. Ejecuta la aplicación:
    ```bash
    streamlit run app.py
    ```
+
+### Construir binario desktop localmente (opcional)
+
+Solo si necesitas generar el ejecutable en tu máquina (con Python 3.10–3.12 activo):
+
+```bash
+pip install -r requirements-build.txt
+bash scripts/build_desktop.sh macos    # macOS
+bash scripts/build_desktop.sh linux    # Linux
+bash scripts/build_desktop.sh windows  # Windows (desde Git Bash)
+```
+
+El resultado queda en `dist/release/`. En Windows y Linux los builds multi-plataforma se generan automáticamente en GitHub Actions al publicar un tag `v*`.
 
 ## Alojamiento en Streamlit Cloud (Recomendado)
 Esta aplicación está diseñada para ser hosteada de manera gratuita en **Streamlit Community Cloud**. 
