@@ -91,6 +91,25 @@ def _adjust_rho_for_curve_type(rho_values: list[float], curve_type: str, smoothe
     return rho_values
 
 
+def _estimate_transition_thickness(L: np.ndarray, rho: np.ndarray) -> float:
+    log_l = np.log10(np.maximum(L, 1e-6))
+    log_r = np.log10(np.maximum(rho, 1e-6))
+    target = (log_r[0] + log_r[-1]) / 2.0
+    for i in range(len(log_r) - 1):
+        if (log_r[i] - target) * (log_r[i + 1] - target) <= 0:
+            denom = log_r[i + 1] - log_r[i]
+            frac = 0.5 if abs(denom) < 1e-12 else (target - log_r[i]) / denom
+            l_cross = 10 ** (log_l[i] + frac * (log_l[i + 1] - log_l[i]))
+            return float(
+                np.clip(
+                    l_cross * 0.35,
+                    max(float(L[0]) * 0.005, 0.001),
+                    max(float(L[-1]) * 2.0, 0.01),
+                )
+            )
+    return float(np.clip(float(np.median(L)) * 0.25, max(float(L[0]) * 0.005, 0.001), float(L[-1])))
+
+
 def _estimate_thicknesses(L: np.ndarray, rho: np.ndarray, n_layers: int) -> list[float]:
     if n_layers < 2:
         return []
@@ -134,7 +153,10 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     rho = rho[order]
 
     curve_type = _detect_curve_type(L, rho)
+    contrast = float(np.max(rho) / max(float(np.min(rho)), 1e-3))
     n_layers = 2 if curve_type in {"DESC2", "ASC2"} else 3
+    if curve_type in {"Q", "DESC2"} and contrast > 80:
+        n_layers = 2
     smoothed = _smooth_curve(rho)
 
     rho_values = _segment_rho_values(L, rho, n_layers)
@@ -143,7 +165,10 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     elif n_layers == 2:
         rho_values = [max(0.1, float(smoothed[0])), max(0.1, float(smoothed[-1]))]
 
-    h_values = _estimate_thicknesses(L, rho, n_layers)
+    if n_layers == 2 and curve_type in {"Q", "DESC2"}:
+        h_values = [_estimate_transition_thickness(L, rho)]
+    else:
+        h_values = _estimate_thicknesses(L, rho, n_layers)
     init_rmse, init_r2 = _metrics(L, rho, rho_values, h_values)
 
     notes: list[str] = []
@@ -154,7 +179,12 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     if float(np.mean(np.diff(L) > 0)) < 0.8:
         score -= 0.35
         notes.append("L no crece de forma consistente. Revisa la columna AB/2.")
-    if float(np.max(rho) / max(float(np.min(rho)), 1e-3)) > 500:
+    if contrast > 80:
+        notes.append(
+            "Curva con contraste extremo (ρ máx/ρ mín > 80). "
+            "El modelo 1D puede no reproducir todos los puntos; verifica columnas y usa búsqueda global."
+        )
+    if contrast > 500:
         notes.append("La curva abarca varios órdenes de magnitud; conviene usar búsqueda global.")
     if init_r2 < 0.0:
         score -= 0.35

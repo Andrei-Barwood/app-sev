@@ -363,8 +363,9 @@ elif nav == "⚡ Herramienta SEV":
             with col1:
                 st.number_input(
                     f"ρ_{i+1} (Ω·m)",
-                    min_value=0.1,
-                    value=max(0.1, float(st.session_state.rho[i])),
+                    min_value=0.01,
+                    value=max(0.01, float(st.session_state.rho[i])),
+                    format="%.3f",
                     key=widget_key(st.session_state, "rho", i),
                 )
                 st.checkbox(
@@ -376,8 +377,9 @@ elif nav == "⚡ Herramienta SEV":
                 if i < n_layers - 1:
                     st.number_input(
                         f"h_{i+1} (m)",
-                        min_value=0.1,
-                        value=max(0.1, float(st.session_state.h[i])),
+                        min_value=0.001,
+                        value=max(0.001, float(st.session_state.h[i])),
+                        format="%.4f",
                         key=widget_key(st.session_state, "h", i),
                     )
                     st.checkbox(
@@ -391,9 +393,16 @@ elif nav == "⚡ Herramienta SEV":
         sync_lists_from_widgets(st.session_state, n_layers)
 
         st.header("4. Optimización")
+        difficult_curve = bool(st.session_state.get("model_init_report", {}).get("use_global_search"))
+        if difficult_curve:
+            st.info(
+                "Curva difícil detectada: se recomienda **Búsqueda Global** "
+                "(contraste alto o forma compleja en los datos importados)."
+            )
         opt_method = st.radio(
             "Método de Ajuste:",
             ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"],
+            index=1 if difficult_curve else 0,
             key="opt_method_radio",
             help="El Refinamiento Local usa los valores actuales del modelo de capas. La Búsqueda Global explora un rango más amplio.",
         )
@@ -405,6 +414,12 @@ elif nav == "⚡ Herramienta SEV":
         if 'opt_error_msg' in st.session_state:
             st.error(st.session_state['opt_error_msg'])
             del st.session_state['opt_error_msg']
+        if st.session_state.pop('opt_fit_warning', False):
+            st.warning(
+                "El modelo de capas no puede coincidir perfectamente con todos los puntos. "
+                "La línea azul es la respuesta **teórica** del suelo modelado, no una copia del CSV. "
+                "Con datos de alto contraste el R² suele quedar entre 0.65 y 0.75 aunque el ajuste sea el mejor posible."
+            )
             
         st.markdown("---")
         st.markdown(
@@ -435,8 +450,8 @@ elif nav == "⚡ Herramienta SEV":
         meta2.metric("Puntos válidos", panel["n_points"])
         meta3.metric("Columnas activas", f"L: `{panel['col_l']}` · ρ: `{panel['col_rho']}`")
         meta4.metric(
-            "ρ medida (min → max)",
-            f"{float(np.min(rho_med)):.2g} → {float(np.max(rho_med)):.2g} Ω·m",
+            "ρ medida (max → min)",
+            f"{float(np.max(rho_med)):.2g} → {float(np.min(rho_med)):.2g} Ω·m",
         )
 
         st.caption(
@@ -482,10 +497,27 @@ elif nav == "⚡ Herramienta SEV":
                     opt_fixed_rho,
                     opt_fixed_h,
                     use_global=use_global,
+                    try_alternate_layers=True,
                 )
-                set_layer_model(st.session_state, best_rho, best_h, fixed_rho=opt_fixed_rho, fixed_h=opt_fixed_h)
+                n_best = len(best_rho)
+                set_layer_model(
+                    st.session_state,
+                    best_rho,
+                    best_h,
+                    fixed_rho=[False] * n_best,
+                    fixed_h=[False] * max(n_best - 1, 0),
+                )
 
-                st.session_state['opt_success_msg'] = f"Optimización finalizada. RMSE: {rmse:.2f} | R²: {r2:.4f}"
+                msg = f"Optimización finalizada ({n_best} capas). RMSE: {rmse:.2f} | R²: {r2:.4f}"
+                if r2 < 0.75:
+                    msg += (
+                        " · Ajuste limitado: curvas con ρ máx/ρ mín > 80 (como 339→0.39 Ω·m) "
+                        "no siempre se reproducen al 100% con un modelo 1D. "
+                        "Verifica columnas L=AB/2 y ρ medida."
+                    )
+                st.session_state['opt_success_msg'] = msg
+                if r2 < 0.75:
+                    st.session_state['opt_fit_warning'] = True
                 st.rerun()
             except Exception as e:
                 st.session_state['opt_error_msg'] = f"Error en la optimización: {e}"
@@ -534,8 +566,8 @@ elif nav == "⚡ Herramienta SEV":
     if data_source != "Generar teóricos":
         st.caption(
             f"**Amarillo** = {len(L_med)} puntos medidos en campo "
-            f"(ρ {float(np.min(rho_med)):.2g}→{float(np.max(rho_med)):.2g} Ω·m). "
-            f"**Azul** = respuesta del modelo de capas actual (ajústalo con «Ajustar»)."
+            f"(ρ {float(np.max(rho_med)):.2g}→{float(np.min(rho_med)):.2g} Ω·m). "
+            f"**Azul** = respuesta teórica del modelo de capas (no es otra lectura del archivo)."
         )
     else:
         st.caption(f"Curva teórica generada ({len(L_med)} puntos). Fuente: {data_source}.")

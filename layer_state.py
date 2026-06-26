@@ -106,8 +106,8 @@ def set_layer_model(
     fixed_h: list[bool] | None = None,
 ) -> None:
     n_layers = len(rho)
-    st_session.rho = [max(0.1, float(v)) for v in rho]
-    st_session.h = [max(0.1, float(v)) for v in h[: n_layers - 1]]
+    st_session.rho = [max(0.01, float(v)) for v in rho]
+    st_session.h = [max(0.001, float(v)) for v in h[: n_layers - 1]]
     st_session.fixed_rho = list(fixed_rho) if fixed_rho else [False] * n_layers
     st_session.fixed_h = list(fixed_h) if fixed_h else [False] * max(n_layers - 1, 0)
     st_session.n_layers = n_layers
