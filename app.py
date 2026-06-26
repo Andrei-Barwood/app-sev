@@ -18,6 +18,7 @@ from sev_import import (
     build_colored_preview,
     detect_l_rho_columns,
     extract_reference_benchmark,
+    refresh_stored_csv_dataset,
     get_column_role_hint,
     get_import_format_help,
     get_sev_transparency_help,
@@ -273,11 +274,44 @@ elif nav == "⚡ Herramienta SEV":
             else:
                 active = get_active_dataset(st.session_state)
                 if active and active.get("source") == data_source:
+                    panel = st.session_state.get("sev_import_panel")
+                    if panel and panel.get("df") is not None:
+                        changed, refresh_msg, L_new, rho_new, col_l_new, col_rho_new = (
+                            refresh_stored_csv_dataset(panel)
+                        )
+                        if changed and L_new is not None and rho_new is not None:
+                            from sev_feasibility import assess_feasibility
+
+                            feasibility = assess_feasibility(L_new, rho_new)
+                            store_active_dataset(
+                                st.session_state,
+                                L_new,
+                                rho_new,
+                                source=data_source,
+                                filename=panel.get("filename", ""),
+                                col_l=col_l_new,
+                                col_rho=col_rho_new,
+                                df=panel["df"],
+                                assessments=panel.get("assessments"),
+                                feasibility=feasibility,
+                                reference_benchmark=panel.get("reference_benchmark"),
+                            )
+                            st.session_state.pop("sev_data_signature", None)
+                            model_init = resolve_initial_model(L_new, rho_new)
+                            apply_model_init_to_session(model_init, st.session_state)
+                            st.session_state["auto_optimize_global"] = model_init.use_global_search
+                            st.warning(f"**Datos corregidos en memoria:** {refresh_msg}")
+                            st.rerun()
                     st.info(
                         f"Datos activos en memoria: **{active.get('filename', 'archivo')}** "
                         f"({active['n_points']} puntos) · L=`{active.get('col_l', '')}` · "
                         f"ρ=`{active.get('col_rho', '')}`"
                     )
+                    if active.get("col_rho") == "R_Medidas":
+                        st.error(
+                            "La columna activa es **R_Medidas** (resistencia en Ω). "
+                            "Vuelve a subir el CSV o pulsa recargar el navegador: debe usarse **Ro_Calculados** (ρₐ en Ω·m)."
+                        )
                     L_med, rho_med = get_active_L_rho(st.session_state)
                 else:
                     clear_active_dataset(st.session_state)
@@ -285,7 +319,7 @@ elif nav == "⚡ Herramienta SEV":
         elif data_source == "Ingreso manual":
             st.caption(
                 "Una línea = un punto. Formato simple: `L, ρ` (ej. `0.6, 339`). "
-                "También puedes pegar filas completas del telurómetro; la app tomará DISTANCIA_AB/2 y R_Medidas."
+                "También puedes pegar filas completas del telurómetro; la app tomará DISTANCIA_AB/2 y Ro_Calculados (ρₐ)."
             )
             manual_default = (
                 "0.6, 339\n0.7, 236.7\n1, 123.1\n2, 31.6\n3, 14.95\n"

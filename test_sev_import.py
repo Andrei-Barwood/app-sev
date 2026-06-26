@@ -1,8 +1,11 @@
+import pandas as pd
+
 from sev_import import (
     assess_column_selection,
     detect_l_rho_columns,
     load_dataframe_from_upload,
     parse_sev_file,
+    refresh_stored_csv_dataset,
 )
 
 
@@ -60,6 +63,25 @@ def test_assess_wrong_columns_for_04_csv():
     )
     levels = {note.level for note in notes}
     assert "error" in levels
+
+
+def test_refresh_stored_csv_fixes_r_medidas_to_ro_calculados():
+    result = parse_sev_file(
+        "/Users/andreibarwood/Documents/CFT/2026/01 - Semestre 1/02 - Taller de Energía/"
+        "03 - Unidad 3 - Puesta a Tierra/Evaluación 4 - Unidad 3/tests/04.csv"
+    )
+    stale_panel = {
+        "df": result.df,
+        "col_l": result.col_l,
+        "col_rho": "R_Medidas",
+        "L_med": result.df["DISTANCIA_AB_2"].to_numpy(dtype=float),
+        "rho_med": result.df["R_Medidas"].to_numpy(dtype=float),
+    }
+    changed, msg, L_med, rho_med, col_l, col_rho = refresh_stored_csv_dataset(stale_panel)
+    assert changed
+    assert col_rho == "Ro_Calculados"
+    assert rho_med[0] == 117.15
+    assert "R_Medidas" in msg or "Ro_Calculados" in msg
 
 
 def test_assess_correct_columns_for_04_csv():

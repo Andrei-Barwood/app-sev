@@ -286,7 +286,8 @@ def build_initial_model_for_layers(L: np.ndarray, rho: np.ndarray, n_layers: int
 
 
 def build_data_signature(filename: str, col_l: str, col_rho: str) -> str:
-    return f"{filename}|{col_l}|{col_rho}"
+    # v2: preferencia Ro_Calculados (ρₐ) frente a R_Medidas (Ω) en exportaciones telurómetro.
+    return f"v2|{filename}|{col_l}|{col_rho}"
 
 
 def build_manual_data_signature(text: str) -> str:

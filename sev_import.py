@@ -737,6 +737,44 @@ def parse_manual_sev_text(text: str) -> ManualParseResult:
     )
 
 
+def refresh_stored_csv_dataset(panel: dict) -> tuple[bool, str, np.ndarray | None, np.ndarray | None, str, str]:
+    """
+    Re-detecta columnas L/ρ en un CSV ya cargado en memoria.
+    Devuelve (cambió, mensaje, L_med, rho_med, col_l, col_rho).
+    """
+    df = panel.get("df")
+    if df is None:
+        return False, "", None, None, "", ""
+
+    old_col_l = panel.get("col_l", "")
+    old_col_rho = panel.get("col_rho", "")
+    col_l, col_rho, _, warnings = detect_l_rho_columns(df, old_col_l or None, None)
+
+    work = df[[col_l, col_rho]].copy()
+    work[col_l] = _to_numeric_series(work[col_l])
+    work[col_rho] = _to_numeric_series(work[col_rho])
+    work = work.dropna(subset=[col_l, col_rho])
+    work = work[(work[col_l] > 0) & (work[col_rho] > 0)]
+    if work.empty:
+        return False, "No se pudo releer el archivo en memoria.", None, None, col_l, col_rho
+
+    L_med = work[col_l].to_numpy(dtype=float)
+    rho_med = work[col_rho].to_numpy(dtype=float)
+    changed = col_l != old_col_l or col_rho != old_col_rho
+    if not changed and len(L_med) == len(panel.get("L_med", [])):
+        if np.allclose(L_med, np.asarray(panel.get("L_med")), rtol=0, atol=1e-6):
+            if np.allclose(rho_med, np.asarray(panel.get("rho_med")), rtol=0, atol=1e-4):
+                return False, "", L_med, rho_med, col_l, col_rho
+
+    msg = (
+        f"Columnas actualizadas: L=`{col_l}` · ρ=`{col_rho}` "
+        f"(antes ρ=`{old_col_rho}`)."
+    )
+    if warnings:
+        msg += " " + warnings[0]
+    return True, msg, L_med, rho_med, col_l, col_rho
+
+
 def parse_sev_file(path: str, col_l: str | None = None, col_rho: str | None = None) -> SevImportResult:
     with open(path, "rb") as fh:
         data = fh.read()
