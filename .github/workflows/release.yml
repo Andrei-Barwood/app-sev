@@ -66,7 +66,48 @@ jobs:
           cd browser_extension
           zip -r ../artifacts/release_extension_${GITHUB_REF_NAME}.zip .
 
+      - name: Prepare patch release notes
+        if: github.ref_name == 'v1.1.1'
+        run: |
+          {
+            echo '## Patch exclusivo para usuarios de v1.1 (Windows)'
+            echo ''
+            echo 'Este release corrige únicamente el paquete `app-sev-windows.zip` de la versión **v1.1**, que se publicó sin el script `setup_windows.ps1`.'
+            echo ''
+            echo '### Qué incluye'
+            echo '- `app-sev-windows.zip` actualizado con `AppSEV.exe` + `setup_windows.ps1`'
+            echo '- Binarios de macOS y Linux (sin cambios funcionales respecto a v1.1)'
+            echo '- Extensión de navegador actualizada'
+            echo ''
+            echo '### Instrucciones'
+            echo '1. Descarga `app-sev-windows.zip` de este release.'
+            echo '2. Ejecuta **antes** de abrir la app:'
+            echo '   ```powershell'
+            echo '   powershell -ExecutionPolicy Bypass -File .\setup_windows.ps1'
+            echo '   ```'
+            echo '3. Abre `AppSEV.exe`.'
+            echo ''
+            echo '### ¿Necesito este patch?'
+            echo '- **Sí**, si instalaste el binario standalone de **v1.1** en Windows.'
+            echo '- **No**, a partir de **v1.2** el script ya viene incluido en el zip de Windows y no hace falta descargar este patch.'
+            echo ''
+            echo '**Full Changelog**: https://github.com/Andrei-Barwood/app-sev/compare/v1.1...v1.1.1'
+          } > release_notes.md
+
+      - name: Create GitHub Release (patch v1.1.1)
+        if: github.ref_name == 'v1.1.1'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          tag_name: ${{ github.ref_name }}
+          name: v1.1.1 — Patch Windows (preconfiguración)
+          body_path: release_notes.md
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create GitHub Release
+        if: github.ref_name != 'v1.1.1'
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
