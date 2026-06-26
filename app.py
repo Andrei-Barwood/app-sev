@@ -35,7 +35,7 @@ from model_init import (
     resolve_initial_model,
 )
 from sev_geometry import inspect_electrode_geometry
-from sev_report import build_sev_pdf_report
+from sev_chart_export import build_sev_chart_pdf
 from sev_schlumberger import build_schlumberger_verification_table, schlumberger_k_factor
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
 from sev_metrics import (
@@ -126,7 +126,7 @@ if nav == "📚 Tutorial y Guía de Uso":
     #### Paso 5: Analizar y Exportar
     - Observa el **Gráfico Principal** (escala log-log) para verificar visualmente el ajuste entre tus puntos (amarillos) y la curva teórica (línea azul oscuro).
     - Revisa la **Sección Geoeléctrica** debajo para ver un perfil de cómo está estructurado tu terreno.
-    - Utiliza los botones de **Exportar Resultados** para descargar tu tabla de errores en Excel/CSV o guardar el modelo en formato JSON para uso futuro.
+    - Utiliza los botones de **Exportar Resultados**: **CSV** y **JSON** guardan la tabla y el modelo; **Exportar gráfico (PDF)** descarga solo la curva con fondo transparente para presentaciones.
     """)
 
 elif nav == "⚡ Herramienta SEV":
@@ -702,9 +702,10 @@ elif nav == "⚡ Herramienta SEV":
     # Calcular curva teórica con los parámetros actuales
     rho_calc = calc_rho_a(L_med, st.session_state.rho, st.session_state.h)
     # === PLOT (único gráfico: datos medidos + modelo de capas) ===
+    measured_label = "Datos medidos"
+    marker_mode = "markers+lines"
     fig = go.Figure()
     if data_source != "Generar teóricos":
-        measured_label = "Datos medidos"
         if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
             measured_label = f"Datos medidos ({active_dataset['filename']})"
         elif data_source == "Ingreso manual":
@@ -864,6 +865,10 @@ elif nav == "⚡ Herramienta SEV":
     st.dataframe(style_results_table(df_results), width="stretch")
     # === EXPORTAR ===
     st.subheader("Exportar Resultados")
+    st.caption(
+        "**Exportar gráfico (PDF):** solo la curva log-log, fondo transparente, lista para presentaciones. "
+        "**Descargar tabla (CSV)** y **Descargar modelo (JSON):** datos numéricos y parámetros que respaldan el gráfico."
+    )
     col_e1, col_e2, col_e3 = st.columns(3)
     with col_e1:
         csv = df_results.to_csv(index=False).encode('utf-8')
@@ -890,31 +895,43 @@ elif nav == "⚡ Herramienta SEV":
             "application/json"
         )
     with col_e3:
-        ref_note = ""
-        if ref_bench is not None:
-            ref_note = (
-                f"Referencia CSV: error prom. {ref_bench['mean_error_pct']:.2f} % "
-                f"(tu ajuste {fit_report.mean_error_pct:.2f} %)."
-            )
-        pdf_bytes = build_sev_pdf_report(
-            filename=active_dataset.get("filename", ""),
-            col_l=active_dataset.get("col_l", ""),
-            col_rho=active_dataset.get("col_rho", ""),
-            L_med=L_med,
-            rho_med=rho_med,
-            rho_calc=rho_calc,
-            rho_layers=list(st.session_state.rho),
-            h_layers=list(st.session_state.h),
-            fit=fit_report,
-            curve_type=model_report.get("curve_type", ""),
-            reference_note=ref_note,
+        ref_L_export = None
+        ref_rho_export = None
+        ref_label_export = None
+        if show_ref_csv_curve and ref_bench_plot is not None:
+            rho_ref_export = np.asarray(ref_bench_plot["rho_calc_aligned"], dtype=float)
+            mask_ref = np.isfinite(rho_ref_export) & (rho_ref_export > 0)
+            if np.any(mask_ref):
+                ref_L_export = L_med[mask_ref]
+                ref_rho_export = rho_ref_export[mask_ref]
+                ref_label_export = f"Referencia CSV ({ref_bench_plot['col_calc']})"
+        chart_pdf = build_sev_chart_pdf(
+            L_med,
+            rho_med,
+            L_smooth,
+            rho_smooth,
+            title=chart_title,
+            measured_label=(
+                "Curva teórica generada" if data_source == "Generar teóricos" else measured_label
+            ),
+            marker_mode=marker_mode,
+            x_ticks=x_ticks,
+            y_ticks=y_ticks,
+            ref_L=ref_L_export,
+            ref_rho=ref_rho_export,
+            ref_label=ref_label_export,
         )
+        chart_filename = "curva_sev.pdf"
+        if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
+            stem = str(active_dataset["filename"]).rsplit(".", 1)[0]
+            chart_filename = f"curva_sev_{stem}.pdf"
         st.download_button(
-            "Descargar informe (PDF)",
-            pdf_bytes,
-            "informe_sev.pdf",
+            "Exportar gráfico (PDF)",
+            chart_pdf,
+            chart_filename,
             "application/pdf",
-            key="download-pdf-report",
+            key="download-chart-pdf",
+            help="Solo el gráfico, fondo transparente. Ideal para PowerPoint, Keynote o informes.",
         )
     # Sección transversal del terreno
     st.subheader("Sección Geoeléctrica")
