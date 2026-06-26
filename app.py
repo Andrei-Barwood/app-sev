@@ -25,6 +25,7 @@ from sev_import import (
     parse_sev_upload,
 )
 from model_init import build_data_signature, estimate_initial_model
+from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
 from layer_state import (
     apply_model_init_to_session,
     bump_layer_widget_generation,
@@ -114,15 +115,24 @@ elif nav == "⚡ Herramienta SEV":
     with st.sidebar:
         st.header("1. Datos de Entrada")
         data_source = st.radio("Fuente de datos:", ["Generar teóricos", "Cargar archivo (CSV/Excel)", "Ingreso manual"])
-        L_med = None
-        rho_med = None
+        if st.session_state.get("sev_data_source") != data_source:
+            clear_active_dataset(st.session_state)
+            st.session_state.sev_data_source = data_source
+
         if data_source == "Generar teóricos":
             l_min = st.number_input("L inicial (m)", min_value=0.1, value=1.0)
             l_max = st.number_input("L final (m)", min_value=1.0, value=1000.0)
             pts_dec = st.number_input("Puntos por década", min_value=3, value=10)
             decades = np.log10(l_max) - np.log10(l_min)
             num_pts = int(decades * pts_dec) + 1
-            L_med = np.logspace(np.log10(l_min), np.log10(l_max), num_pts)
+            L_teo = np.logspace(np.log10(l_min), np.log10(l_max), num_pts)
+            rho_teo = calc_rho_a(L_teo, st.session_state.rho, st.session_state.h)
+            store_active_dataset(
+                st.session_state,
+                L_teo,
+                rho_teo,
+                source=data_source,
+            )
         elif data_source == "Cargar archivo (CSV/Excel)":
             with st.expander("¿Qué debe traer el archivo?", expanded=False):
                 st.markdown(get_import_format_help())
@@ -170,27 +180,27 @@ elif nav == "⚡ Herramienta SEV":
                         col_l=col_l_selected,
                         col_rho=col_rho_selected,
                     )
-                    L_med = import_result.L_med
-                    rho_med = import_result.rho_med
                     assessments = assess_column_selection(
                         import_result.col_l,
                         import_result.col_rho,
-                        L_med,
-                        rho_med,
+                        import_result.L_med,
+                        import_result.rho_med,
                         import_result.suggested_col_l,
                         import_result.suggested_col_rho,
                     )
 
-                    st.session_state["sev_import_panel"] = {
-                        "filename": uploaded_file.name,
-                        "df": import_result.df,
-                        "col_l": import_result.col_l,
-                        "col_rho": import_result.col_rho,
-                        "assessments": assessments,
-                        "n_points": len(L_med),
-                        "L_med": L_med,
-                        "rho_med": rho_med,
-                    }
+                    store_active_dataset(
+                        st.session_state,
+                        import_result.L_med,
+                        import_result.rho_med,
+                        source=data_source,
+                        filename=uploaded_file.name,
+                        col_l=import_result.col_l,
+                        col_rho=import_result.col_rho,
+                        df=import_result.df,
+                        assessments=assessments,
+                    )
+                    L_med, rho_med = get_active_L_rho(st.session_state)
 
                     for item in assessments:
                         if item.level == "success":
@@ -220,10 +230,20 @@ elif nav == "⚡ Herramienta SEV":
                         else:
                             st.session_state.pop("model_init_report", None)
                 except Exception as e:
-                    st.session_state.pop("sev_import_panel", None)
+                    clear_active_dataset(st.session_state)
                     st.error(f"Error al leer el archivo: {e}")
             else:
-                st.session_state.pop("sev_import_panel", None)
+                active = get_active_dataset(st.session_state)
+                if active and active.get("source") == data_source:
+                    st.info(
+                        f"Datos activos en memoria: **{active.get('filename', 'archivo')}** "
+                        f"({active['n_points']} puntos) · L=`{active.get('col_l', '')}` · "
+                        f"ρ=`{active.get('col_rho', '')}`"
+                    )
+                    L_med, rho_med = get_active_L_rho(st.session_state)
+                else:
+                    clear_active_dataset(st.session_state)
+                    L_med, rho_med = None, None
         elif data_source == "Ingreso manual":
             st.write("Formato: L, Rho_med (un punto por línea)")
             manual_data = st.text_area("Datos", "1.0, 100\n3.0, 80\n10.0, 50\n30.0, 60\n100.0, 120")
@@ -243,10 +263,17 @@ elif nav == "⚡ Herramienta SEV":
                     raise ValueError("No se encontraron números válidos")
                     
                 data = np.array(parsed_data)
-                L_med = data[:, 0]
-                rho_med = data[:, 1]
+                store_active_dataset(
+                    st.session_state,
+                    data[:, 0],
+                    data[:, 1],
+                    source=data_source,
+                )
             except Exception as e:
                 st.error("Error en formato de datos. Asegúrate de ingresar números válidos para L y Rho.")
+
+        L_med, rho_med = get_active_L_rho(st.session_state)
+
         st.header("2. Curvas de Referencia (Mooney-Orellana)")
         
         suggested_index = 0
@@ -389,9 +416,14 @@ elif nav == "⚡ Herramienta SEV":
             unsafe_allow_html=True
         )
     # === CALCULOS ===
-    if L_med is None or len(L_med) == 0:
+    active_dataset = get_active_dataset(st.session_state)
+    if active_dataset is None:
         st.warning("Por favor ingresa datos de L para continuar.")
         st.stop()
+
+    L_med = active_dataset["L_med"]
+    rho_med = active_dataset["rho_med"]
+    data_source = active_dataset.get("source", data_source)
 
     if data_source == "Cargar archivo (CSV/Excel)" and st.session_state.get("sev_import_panel"):
         panel = st.session_state["sev_import_panel"]
@@ -418,8 +450,8 @@ elif nav == "⚡ Herramienta SEV":
         preview_fig = go.Figure()
         preview_fig.add_trace(
             go.Scatter(
-                x=panel["L_med"],
-                y=panel["rho_med"],
+                x=L_med,
+                y=rho_med,
                 mode="markers+lines",
                 name="Curva seleccionada",
                 marker=dict(color="#FFB000", size=9, line=dict(color="#63627C", width=1)),
@@ -450,10 +482,12 @@ elif nav == "⚡ Herramienta SEV":
             st.dataframe(pd.DataFrame(hint_rows), use_container_width=True, hide_index=True)
 
         st.markdown("---")
-    # Si no hay datos medidos (modo teóricos), generamos unos dummy
-    if rho_med is None:
-        # Usamos el modelo actual para generar datos
-        rho_med = calc_rho_a(L_med, st.session_state.rho, st.session_state.h)
+
+    st.caption(
+        f"Gráfico principal y optimización usan el mismo dataset activo "
+        f"({len(L_med)} puntos, fuente: {data_source})."
+    )
+
     if run_opt:
         with st.spinner("Optimizando modelo... (esto puede tardar unos segundos)"):
             try:
