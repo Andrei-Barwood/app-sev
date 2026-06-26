@@ -31,7 +31,7 @@ mkdir -p "$DIST_DIR"
 
 if [[ "$PLATFORM" == windows* ]] || [[ "$PLATFORM" == mingw* ]]; then
   cp dist/AppSEV.exe "$DIST_DIR/"
-  (cd dist/release && zip -r "${OUT_NAME}.zip" "$OUT_NAME")
+  powershell -NoProfile -Command "Compress-Archive -Path '${DIST_DIR}' -DestinationPath 'dist/release/${OUT_NAME}.zip' -Force"
 else
   cp dist/AppSEV "$DIST_DIR/"
   chmod +x "$DIST_DIR/AppSEV"
