@@ -553,7 +553,7 @@ def extract_reference_benchmark(
     """Extrae benchmark del curso si el CSV trae columnas de referencia (p. ej. 01.csv)."""
     col_calc = _find_column_by_tokens(df, ("rho_calculado", "ro_calculado", "calculado"))
     col_err = _find_column_by_tokens(df, ("error",))
-    if col_calc is None:
+    if col_calc is None or col_calc == col_rho:
         return None
 
     work = df[[col_l, col_rho, col_calc]].copy()

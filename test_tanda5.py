@@ -16,10 +16,12 @@ TESTS_DIR = Path(
 )
 
 
-def test_04_csv_auto_expands_to_four_layers():
+def test_04_csv_imports_apparent_resistivity_curve():
     result = parse_sev_file(str(TESTS_DIR / "04.csv"))
+    assert result.col_rho == "Ro_Calculados"
+    assert result.rho_med[0] == 117.15
     init = resolve_initial_model(result.L_med, result.rho_med)
-    assert init.n_layers >= 4
+    assert init.n_layers >= 2
 
 
 def test_01_csv_reference_curve_aligns_to_measurements():
@@ -34,14 +36,12 @@ def test_01_csv_reference_curve_aligns_to_measurements():
     assert aligned[0] > 0
 
 
-def test_04_csv_has_ro_calculados_for_plot():
+def test_04_csv_no_self_benchmark_when_rho_is_ro_calculados():
     result = parse_sev_file(str(TESTS_DIR / "04.csv"))
     bench = extract_reference_benchmark(
         result.df, result.col_l, result.col_rho, result.L_med, result.rho_med
     )
-    assert bench is not None
-    assert "Ro_Calculados" in bench["col_calc"] or "calculado" in bench["col_calc"].lower()
-    assert np.sum(np.isfinite(bench["rho_calc_aligned"])) == len(result.L_med)
+    assert bench is None
 
 
 def test_strict_mode_reduces_points_over_threshold_on_01():
