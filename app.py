@@ -7,6 +7,28 @@ import json
 
 from core import calc_rho_a
 from optimizer import run_optimization
+from malla_export import (
+    build_malla_bt_payload,
+    format_malla_bt_csv,
+    format_malla_bt_csv_completo,
+    format_malla_bt_json,
+)
+from sev_import import (
+    assess_column_selection,
+    build_colored_preview,
+    detect_l_rho_columns,
+    get_column_role_hint,
+    get_import_format_help,
+    get_sev_transparency_help,
+    load_dataframe_from_upload,
+    numeric_columns,
+    parse_sev_upload,
+)
+from model_init import (
+    apply_model_init_to_session,
+    build_data_signature,
+    estimate_initial_model,
+)
 
 st.set_page_config(page_title="App SEV", page_icon="⚡", layout="wide")
 
@@ -57,7 +79,7 @@ if nav == "📚 Tutorial y Guía de Uso":
 
     #### Paso 1: Ingresar Datos
     En la barra lateral izquierda, selecciona tu "Fuente de datos":
-    - **Cargar archivo:** Sube un CSV o Excel con dos columnas: `L (AB/2)` y `Rho_med`.
+    - **Cargar archivo:** Sube un CSV o Excel con al menos **L (AB/2)** y **ρ medida**. La app reconoce encabezados como `DISTANCIA_AB_2`, `R_Medidas`, `Rho Medido`, etc. Abre **¿Qué debe traer el archivo?** para ver el formato completo.
     - **Ingreso manual:** Escribe tus puntos medidos directamente en la caja de texto.
     - **Generar teóricos:** Útil si solo deseas simular cómo se vería la curva de un terreno hipotético sin datos de campo.
 
@@ -92,60 +114,108 @@ elif nav == "⚡ Herramienta SEV":
             num_pts = int(decades * pts_dec) + 1
             L_med = np.logspace(np.log10(l_min), np.log10(l_max), num_pts)
         elif data_source == "Cargar archivo (CSV/Excel)":
+            with st.expander("¿Qué debe traer el archivo?", expanded=False):
+                st.markdown(get_import_format_help())
+
             uploaded_file = st.file_uploader("Sube tu archivo", type=['csv', 'txt', 'xlsx', 'xls'])
             if uploaded_file is not None:
                 try:
-                    if uploaded_file.name.endswith('.csv') or uploaded_file.name.endswith('.txt'):
-                        try:
-                            # 1. Intentamos leerlo asumiendo que viene de Excel español (separado por Tabuladores o Punto y Coma)
-                            # Usamos regex [;\t] para separar. Esto evita que los decimales con coma confundan al parser.
-                            df_upload = pd.read_csv(uploaded_file, sep=r'[;\t]', engine='python')
-                            
-                            # Si no se separó en al menos 2 columnas, asumimos que es un CSV tradicional (separado por comas)
-                            if df_upload.shape[1] < 2:
-                                uploaded_file.seek(0)
-                                df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
-                        except Exception:
-                            uploaded_file.seek(0)
-                            df_upload = pd.read_csv(uploaded_file, sep=None, engine='python')
-                    else:
-                        df_upload = pd.read_excel(uploaded_file)
-                        
-                    # Buscamos inteligentemente las dos primeras columnas que contengan datos numéricos reales
-                    # Esto ignora columnas vacías al principio (muy común al exportar desde Excel)
-                    valid_cols = []
-                    for col in df_upload.columns:
-                        temp_col = pd.to_numeric(df_upload[col].astype(str).str.replace(',', '.'), errors='coerce')
-                        if temp_col.notna().sum() > 0:
-                            valid_cols.append(col)
-                        if len(valid_cols) == 2:
-                            break
-                            
-                    if len(valid_cols) < 2:
-                        raise ValueError("No se encontraron dos columnas con datos numéricos válidos en el archivo.")
-                        
-                    col1, col2 = valid_cols[0], valid_cols[1]
-                    
-                    # Limpiamos strings, reemplazamos comas decimales por puntos y forzamos a numérico
-                    df_upload[col1] = pd.to_numeric(df_upload[col1].astype(str).str.replace(',', '.'), errors='coerce')
-                    df_upload[col2] = pd.to_numeric(df_upload[col2].astype(str).str.replace(',', '.'), errors='coerce')
-                    
-                    # Eliminamos filas que hayan resultado en NaN (nulos o strings inválidos)
-                    df_upload = df_upload.dropna(subset=[col1, col2])
-                    
-                    if len(df_upload) == 0:
-                        raise ValueError(f"Las columnas detectadas ({col1} y {col2}) no tienen datos en las mismas filas, o los datos son inválidos. Asegúrate de que L y Rho estén lado a lado.")
-                    
-                    L_med = df_upload[col1].values
-                    rho_med = df_upload[col2].values
-                    st.success("Archivo cargado correctamente.")
-                    
-                    # Flujo Automático: Si es un archivo nuevo, marcamos para auto-optimizar
-                    if st.session_state.get('last_uploaded_csv') != uploaded_file.name:
-                        st.session_state['last_uploaded_csv'] = uploaded_file.name
-                        st.session_state['auto_optimize_pending'] = True
+                    uploaded_file.seek(0)
+                    df_upload = load_dataframe_from_upload(uploaded_file, uploaded_file.name)
+                    numeric_options = numeric_columns(df_upload)
+                    if len(numeric_options) < 2:
+                        raise ValueError("El archivo debe tener al menos dos columnas numéricas.")
+
+                    suggested_l, suggested_rho, _, _ = detect_l_rho_columns(df_upload)
+                    l_index = numeric_options.index(suggested_l) if suggested_l in numeric_options else 0
+                    rho_index = (
+                        numeric_options.index(suggested_rho)
+                        if suggested_rho in numeric_options
+                        else min(1, len(numeric_options) - 1)
+                    )
+
+                    st.caption("Elige qué columnas representan el experimento SEV. Verde = L (AB/2), amarillo = ρ medida.")
+                    pick1, pick2 = st.columns(2)
+                    with pick1:
+                        col_l_selected = st.selectbox(
+                            "Eje L — AB/2 [m]",
+                            numeric_options,
+                            index=l_index,
+                            key=f"col_l_{uploaded_file.name}",
+                            help=get_column_role_hint(suggested_l),
+                        )
+                    with pick2:
+                        col_rho_selected = st.selectbox(
+                            "Eje ρ — medida en campo [Ω·m]",
+                            numeric_options,
+                            index=rho_index,
+                            key=f"col_rho_{uploaded_file.name}",
+                            help=get_column_role_hint(suggested_rho),
+                        )
+
+                    uploaded_file.seek(0)
+                    import_result = parse_sev_upload(
+                        uploaded_file,
+                        uploaded_file.name,
+                        col_l=col_l_selected,
+                        col_rho=col_rho_selected,
+                    )
+                    L_med = import_result.L_med
+                    rho_med = import_result.rho_med
+                    assessments = assess_column_selection(
+                        import_result.col_l,
+                        import_result.col_rho,
+                        L_med,
+                        rho_med,
+                        import_result.suggested_col_l,
+                        import_result.suggested_col_rho,
+                    )
+
+                    st.session_state["sev_import_panel"] = {
+                        "filename": uploaded_file.name,
+                        "df": import_result.df,
+                        "col_l": import_result.col_l,
+                        "col_rho": import_result.col_rho,
+                        "assessments": assessments,
+                        "n_points": len(L_med),
+                        "L_med": L_med,
+                        "rho_med": rho_med,
+                    }
+
+                    for item in assessments:
+                        if item.level == "success":
+                            st.success(f"**{item.title}:** {item.message}")
+                        elif item.level == "error":
+                            st.error(f"**{item.title}:** {item.message}")
+                        elif item.level == "warning":
+                            st.warning(f"**{item.title}:** {item.message}")
+                        else:
+                            st.info(f"**{item.title}:** {item.message}")
+
+                    for warning in import_result.warnings:
+                        st.warning(warning)
+
+                    data_signature = build_data_signature(
+                        uploaded_file.name,
+                        import_result.col_l,
+                        import_result.col_rho,
+                    )
+                    has_column_errors = any(item.level == "error" for item in assessments)
+                    if st.session_state.get("sev_data_signature") != data_signature:
+                        st.session_state["sev_data_signature"] = data_signature
+                        if not has_column_errors:
+                            model_init = estimate_initial_model(L_med, rho_med)
+                            apply_model_init_to_session(model_init, st.session_state)
+                            st.session_state["auto_optimize_pending"] = model_init.coherence_score >= 0.45
+                            st.session_state["auto_optimize_global"] = model_init.use_global_search
+                        else:
+                            st.session_state.pop("model_init_report", None)
+                            st.session_state["auto_optimize_pending"] = False
                 except Exception as e:
+                    st.session_state.pop("sev_import_panel", None)
                     st.error(f"Error al leer el archivo: {e}")
+            else:
+                st.session_state.pop("sev_import_panel", None)
         elif data_source == "Ingreso manual":
             st.write("Formato: L, Rho_med (un punto por línea)")
             manual_data = st.text_area("Datos", "1.0, 100\n3.0, 80\n10.0, 50\n30.0, 60\n100.0, 120")
@@ -171,63 +241,23 @@ elif nav == "⚡ Herramienta SEV":
                 st.error("Error en formato de datos. Asegúrate de ingresar números válidos para L y Rho.")
         st.header("2. Curvas de Referencia (Mooney-Orellana)")
         
-        # Analizar los datos para sugerir el tipo de curva
         suggested_index = 0
-        if rho_med is not None and len(rho_med) >= 4:
-            # Suavizado básico (media móvil) para ignorar picos de ruido
-            smoothed = np.convolve(rho_med, np.ones(3)/3, mode='valid') if len(rho_med) >= 5 else rho_med
-            
-            idx_max = np.argmax(smoothed)
-            idx_min = np.argmin(smoothed)
-            n = len(smoothed)
-            margin = max(1, int(n * 0.15)) # Ignoramos los extremos (15% inicial y final)
-            
-            keys_list = list(MOONEY_ORELLANA_REF.keys())
-            suggested_key = None
-            
-            # ¿Hay una montaña en el medio?
-            if margin <= idx_max <= n - 1 - margin:
-                suggested_key = "3 Capas - Tipo K (Máximo) ρ1<ρ2>ρ3"
-            # ¿Hay un valle en el medio?
-            elif margin <= idx_min <= n - 1 - margin:
-                suggested_key = "3 Capas - Tipo H (Mínimo) ρ1>ρ2<ρ3"
-            else:
-                # Si no hay picos ni valles claros en el centro, vemos la tendencia
-                if smoothed[-1] > smoothed[0]:
-                    suggested_key = "3 Capas - Tipo A (Ascendente) ρ1<ρ2<ρ3"
-                else:
-                    suggested_key = "3 Capas - Tipo Q (Descendente) ρ1>ρ2>ρ3"
-                    
-            if suggested_key and suggested_key in keys_list:
-                suggested_index = keys_list.index(suggested_key)
-                st.info(f"💡 **Sugerencia de la App:** Según la forma de tus datos, tu terreno parece coincidir con una curva **{suggested_key.split(' - ')[1]}**.")
-                
-                # Auto-cargar la curva si venimos de un archivo nuevo
-                if st.session_state.get('auto_optimize_pending', False):
-                    # Inyectar una estimación inteligente basada en los datos reales
-                    # para que el Refinamiento Local comience MUY cerca de la solución real
-                    rho1_smart = max(0.1, float(smoothed[0]))
-                    rho3_smart = max(0.1, float(smoothed[-1]))
-                    
-                    if "Tipo K" in suggested_key:
-                        rho2_smart = max(0.1, float(np.max(smoothed)) * 1.5)
-                    elif "Tipo H" in suggested_key:
-                        rho2_smart = max(0.1, float(np.min(smoothed)) * 0.5)
-                    else:
-                        rho2_smart = max(0.1, float((rho1_smart + rho3_smart) / 2.0))
-                        
-                    st.session_state.rho = [rho1_smart, rho2_smart, rho3_smart]
-                    # Espesores iniciales razonables aproximados de L
-                    st.session_state.h = [max(0.1, float(L_med[1])), max(0.1, float(L_med[-3]))] if len(L_med) > 4 else [2.0, 10.0]
-                    
-                    st.session_state.fixed_rho = [False] * len(st.session_state.rho)
-                    st.session_state.fixed_h = [False] * len(st.session_state.h)
-                    
-                    # Forzar a los widgets a tomar los nuevos valores limpiando su estado interno
-                    for k in list(st.session_state.keys()):
-                        if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
-                            del st.session_state[k]
-                
+        if rho_med is not None and len(rho_med) >= 3:
+            model_report = st.session_state.get("model_init_report")
+            if model_report and model_report.get("mooney_key") in MOONEY_ORELLANA_REF:
+                suggested_index = list(MOONEY_ORELLANA_REF.keys()).index(model_report["mooney_key"])
+                st.info(
+                    f"💡 **Detector de coherencia:** curva tipo **{model_report['curve_type']}** "
+                    f"({model_report['mooney_key'].split(' - ', 1)[-1]}). "
+                    f"Coherencia {model_report['coherence_score']:.0%}."
+                )
+            elif len(rho_med) >= 4:
+                init_preview = estimate_initial_model(np.asarray(L_med), np.asarray(rho_med))
+                suggested_index = list(MOONEY_ORELLANA_REF.keys()).index(init_preview.mooney_key)
+                st.info(
+                    f"💡 **Sugerencia:** la forma de tus datos se parece a **{init_preview.mooney_key.split(' - ', 1)[-1]}**."
+                )
+
         ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()), index=suggested_index)
         if st.button("Cargar Curva de Referencia"):
             if ref_choice != "Personalizado":
@@ -242,7 +272,28 @@ elif nav == "⚡ Herramienta SEV":
                         del st.session_state[k]
                 st.rerun()
         st.header("3. Modelo de Capas")
-        # Manejar cambios en el número de capas conservando datos si es posible
+        if (
+            data_source == "Cargar archivo (CSV/Excel)"
+            and rho_med is not None
+            and len(rho_med) >= 3
+        ):
+            recalc_cols = st.columns([2, 1])
+            with recalc_cols[0]:
+                if st.session_state.get("model_init_report"):
+                    report = st.session_state["model_init_report"]
+                    st.caption(
+                        f"Inicialización desde datos: R² inicial {report['init_r2']:.3f} | "
+                        f"RMSE inicial {report['init_rmse']:.2f} Ω·m"
+                    )
+                    for note in report.get("notes", []):
+                        st.caption(f"• {note}")
+            with recalc_cols[1]:
+                if st.button("Recalcular desde CSV", help="Vuelve a estimar ρ y h a partir de la tabla importada"):
+                    model_init = estimate_initial_model(np.asarray(L_med), np.asarray(rho_med))
+                    apply_model_init_to_session(model_init, st.session_state)
+                    st.session_state["auto_optimize_global"] = model_init.use_global_search
+                    st.rerun()
+
         n_layers = st.number_input("Número de capas", min_value=2, max_value=10, value=len(st.session_state.rho))
         if n_layers != len(st.session_state.rho):
             if n_layers > len(st.session_state.rho):
@@ -283,10 +334,12 @@ elif nav == "⚡ Herramienta SEV":
         # Botón normal de ajuste
         run_opt = st.button("Ajustar", type="primary")
         
-        # Disparo automático si viene de una nueva carga de archivo
         if st.session_state.get('auto_optimize_pending', False):
             run_opt = True
-            st.session_state['auto_optimize_pending'] = False # Limpiar la bandera
+            st.session_state['auto_optimize_pending'] = False
+            if st.session_state.get('auto_optimize_global', False):
+                opt_method = "Búsqueda Global (Automático)"
+                st.caption("Optimización automática iniciada con búsqueda global según la coherencia del CSV.")
             
         if 'opt_success_msg' in st.session_state:
             st.success(st.session_state['opt_success_msg'])
@@ -308,6 +361,64 @@ elif nav == "⚡ Herramienta SEV":
     if L_med is None or len(L_med) == 0:
         st.warning("Por favor ingresa datos de L para continuar.")
         st.stop()
+
+    if data_source == "Cargar archivo (CSV/Excel)" and st.session_state.get("sev_import_panel"):
+        panel = st.session_state["sev_import_panel"]
+        st.subheader("Importación transparente del archivo")
+        st.markdown(get_sev_transparency_help())
+
+        meta1, meta2, meta3 = st.columns(3)
+        meta1.metric("Archivo", panel["filename"])
+        meta2.metric("Puntos válidos", panel["n_points"])
+        meta3.metric("Columnas activas", f"L: {panel['col_l']}")
+
+        st.caption(f"ρ medida desde `{panel['col_rho']}` · Las columnas resaltadas son las que alimentan el modelo.")
+
+        legend1, legend2, legend3 = st.columns(3)
+        legend1.markdown("🟩 **Verde** → L (AB/2)")
+        legend2.markdown("🟨 **Amarillo** → ρ medida")
+        legend3.markdown("⬜ **Gris** → no usadas en el SEV")
+
+        st.dataframe(
+            build_colored_preview(panel["df"], panel["col_l"], panel["col_rho"]),
+            use_container_width=True,
+        )
+
+        preview_fig = go.Figure()
+        preview_fig.add_trace(
+            go.Scatter(
+                x=panel["L_med"],
+                y=panel["rho_med"],
+                mode="markers+lines",
+                name="Curva seleccionada",
+                marker=dict(color="#FFB000", size=9, line=dict(color="#63627C", width=1)),
+                line=dict(color="#A7B7CF", width=1, dash="dot"),
+            )
+        )
+        preview_fig.update_layout(
+            title="Vista previa de la curva con tu selección actual",
+            xaxis_title="L (AB/2) [m]",
+            yaxis_title="ρ medida [Ω·m]",
+            xaxis_type="log",
+            yaxis_type="log",
+            height=320,
+            margin=dict(l=20, r=20, t=50, b=20),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#FFFFFF",
+            font=dict(color="#63627C"),
+        )
+        preview_fig.update_xaxes(gridcolor="#EAEEF4")
+        preview_fig.update_yaxes(gridcolor="#EAEEF4")
+        st.plotly_chart(preview_fig, use_container_width=True)
+
+        with st.expander("Guía de columnas detectadas en el archivo"):
+            hint_rows = [
+                {"Columna": col, "Rol sugerido": get_column_role_hint(col)}
+                for col in panel["df"].columns
+            ]
+            st.dataframe(pd.DataFrame(hint_rows), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
     # Si no hay datos medidos (modo teóricos), generamos unos dummy
     if rho_med is None:
         # Usamos el modelo actual para generar datos
@@ -315,7 +426,11 @@ elif nav == "⚡ Herramienta SEV":
     if run_opt:
         with st.spinner("Optimizando modelo... (esto puede tardar unos segundos)"):
             try:
-                use_global = (opt_method == "Búsqueda Global (Automático)")
+                use_global = (
+                    opt_method == "Búsqueda Global (Automático)"
+                    or st.session_state.get("auto_optimize_global", False)
+                )
+                st.session_state["auto_optimize_global"] = False
                 best_rho, best_h, rmse, r2 = run_optimization(
                     L_med, rho_med, 
                     st.session_state.rho, st.session_state.h,
@@ -380,6 +495,7 @@ elif nav == "⚡ Herramienta SEV":
         'Rho Calculado [Ω·m]': rho_calc,
     })
     df_results['Error (%)'] = np.abs((df_results['Rho Medido [Ω·m]'] - df_results['Rho Calculado [Ω·m]']) / df_results['Rho Medido [Ω·m]']) * 100
+    st.session_state['sev_results_df'] = df_results
     col_m1, col_m2, col_m3 = st.columns(3)
     rmse_current = np.sqrt(np.mean((rho_med - rho_calc)**2))
     col_m1.metric("RMSE Actual", f"{rmse_current:.2f}")
@@ -619,6 +735,79 @@ elif nav == "🏗️ Diseño Malla BT y Reporte":
             margin=dict(l=20, r=20, t=40, b=20)
         )
         st.plotly_chart(fig_malla, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Exportar para AutoCAD")
+        st.caption(
+            "Genera archivos compatibles con **MALLABTCSV** y **MALLABTJSON** "
+            "(script Dibujar_Malla_BT.lsp v1.6+). Formato tabular como resultados_sev.csv."
+        )
+
+        etiqueta_default = " ".join(part for part in (marca.strip(), modelo.strip()) if part) or "Malla BT"
+        etiqueta_malla = st.text_input("Etiqueta de la malla", etiqueta_default, key="malla_etiqueta")
+        col_autocad_1, col_autocad_2 = st.columns(2)
+        with col_autocad_1:
+            modo_3d_export = st.checkbox("Modo 3D (malla enterrada)", value=False, key="malla_modo_3d")
+        with col_autocad_2:
+            agregar_picas_export = st.checkbox(
+                "Agregar picas en esquinas",
+                value=True,
+                key="malla_agregar_picas",
+            )
+
+        longitud_picas_export = (
+            float(longitud_barra) if n_barras > 0 else 3.0
+        )
+
+        export_valid = separacion <= min(largo, ancho) and Lt > 0 and area > 0
+        if export_valid:
+            malla_payload = build_malla_bt_payload(
+                largo=largo,
+                ancho=ancho,
+                separacion=separacion,
+                profundidad=profundidad,
+                resistividad=rho_diseno,
+                etiqueta=etiqueta_malla,
+                modo_3d=modo_3d_export,
+                agregar_picas=agregar_picas_export,
+                longitud_picas=longitud_picas_export,
+                rg=Rg,
+                longitud_total=Lt,
+                area=area,
+            )
+            col_exp_csv, col_exp_json, col_exp_full = st.columns(3)
+            with col_exp_csv:
+                st.download_button(
+                    "Descargar malla (CSV)",
+                    format_malla_bt_csv(malla_payload).encode("utf-8"),
+                    "malla_bt.csv",
+                    "text/csv",
+                    key="download-malla-csv",
+                )
+            with col_exp_json:
+                st.download_button(
+                    "Descargar malla (JSON)",
+                    format_malla_bt_json(malla_payload).encode("utf-8"),
+                    "malla_bt.json",
+                    "application/json",
+                    key="download-malla-json",
+                )
+            with col_exp_full:
+                sev_df = st.session_state.get("sev_results_df")
+                st.download_button(
+                    "Descargar estudio completo (CSV)",
+                    format_malla_bt_csv_completo(malla_payload, sev_df).encode("utf-8"),
+                    "estudio_malla_bt.csv",
+                    "text/csv",
+                    key="download-malla-csv-completo",
+                    disabled=sev_df is None,
+                    help="Incluye parametros de malla y tabla SEV (requiere haber analizado el sondeo).",
+                )
+        else:
+            st.warning(
+                "Corrige las dimensiones de la malla (D debe ser menor que largo y ancho) "
+                "para habilitar la exportación a AutoCAD."
+            )
 
     st.markdown("---")
     st.header("3. Generación del Reporte Técnico")
