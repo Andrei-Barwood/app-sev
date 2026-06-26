@@ -529,6 +529,141 @@ def extract_reference_benchmark(
     }
 
 
+@dataclass
+class ManualParseResult:
+    L_med: np.ndarray
+    rho_med: np.ndarray
+    warnings: list[str]
+    format_detected: str
+    n_lines_parsed: int
+
+
+def _extract_numbers_from_line(line: str) -> list[float]:
+    """Separa por comas/tabuladores (CSV) y convierte cada celda a número."""
+    normalized = line.strip().replace("\t", ",").replace(";", ",")
+    parts = [p.strip() for p in normalized.split(",") if p.strip()]
+    values: list[float] = []
+    for part in parts:
+        token = part.replace(" ", "")
+        if token.count(",") == 1 and token.count(".") == 0:
+            token = token.replace(",", ".")
+        try:
+            values.append(float(token))
+        except ValueError:
+            nums = re.findall(r"[-+]?\d+(?:\.\d+)?", part)
+            values.extend(float(n) for n in nums)
+    return values
+
+
+def _pick_l_rho_from_numbers(nums: list[float]) -> tuple[float, float, str]:
+    if len(nums) < 2:
+        raise ValueError("Se necesitan al menos dos números por línea.")
+
+    if len(nums) == 2:
+        return nums[0], nums[1], "dos_columnas"
+
+    if len(nums) >= 5:
+        # Formato telurómetro: N_Lectura, DISTANCIA_AB_2, a, d, R_Medidas, [Ro_Calculados]
+        return nums[1], nums[4], "telurómetro_multicolumna"
+
+    if len(nums) == 3:
+        return nums[0], nums[1], "tres_columnas"
+
+    return nums[0], nums[1], "dos_primeras_columnas"
+
+
+def _validate_manual_curve(L: np.ndarray, rho: np.ndarray) -> list[str]:
+    warnings: list[str] = []
+    if len(L) < 2:
+        return warnings
+
+    order = np.argsort(L)
+    Ls = L[order]
+    rhos = rho[order]
+
+    if np.any(np.diff(Ls) <= 0):
+        warnings.append(
+            "Hay valores de L repetidos o desordenados. Revisa que la primera columna sea AB/2 [m]."
+        )
+
+    lecture_like = len(L) >= 4 and np.allclose(Ls, np.arange(1, len(Ls) + 1), atol=0.01)
+    if lecture_like and float(np.max(rhos)) < 20:
+        warnings.append(
+            "Los valores de L parecen números de lectura (1, 2, 3…) y ρ muy bajas. "
+            "¿Pegaste filas completas del telurómetro? Usa solo **L, ρ** o deja que la app lea columnas 2 y 5."
+        )
+
+    log_rho = np.log10(np.maximum(rhos, 1e-6))
+    log_l = np.log10(np.maximum(Ls, 1e-6))
+    jumps = np.abs(np.diff(log_rho) / np.maximum(np.diff(log_l), 1e-6))
+    if np.any(jumps > 8):
+        warnings.append(
+            "La curva tiene saltos muy abruptos entre puntos vecinos. "
+            "Eso no es típico en SEV: suele indicar columnas mal elegidas al pegar datos."
+        )
+
+    if float(np.max(rhos) / max(float(np.min(rhos)), 1e-3)) > 50:
+        ratios = rhos[1:] / np.maximum(rhos[:-1], 1e-6)
+        if np.any(ratios > 3) and np.any(ratios < 1 / 3):
+            warnings.append(
+                "ρ sube y baja bruscamente al aumentar L. Una curva SEV real suele ser suave en escala log-log."
+            )
+
+    return warnings
+
+
+def parse_manual_sev_text(text: str) -> ManualParseResult:
+    """
+    Interpreta texto manual SEV.
+    Acepta:
+      - Dos columnas: L, ρ
+      - Filas de telurómetro pegadas: N, L, a, d, R_Medidas, ...
+    """
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError("No hay líneas para interpretar.")
+
+    parsed: list[tuple[float, float, str]] = []
+    for line in lines:
+        if line.lower().startswith(("l", "n", "dist", "ab")) and any(c.isalpha() for c in line[:6]):
+            continue
+        nums = _extract_numbers_from_line(line)
+        if len(nums) < 2:
+            continue
+        L_val, rho_val, fmt = _pick_l_rho_from_numbers(nums)
+        if L_val <= 0 or rho_val <= 0:
+            continue
+        parsed.append((L_val, rho_val, fmt))
+
+    if not parsed:
+        raise ValueError(
+            "No se encontraron pares válidos L, ρ. Formato: `0.6, 339` por línea "
+            "o pega filas completas del telurómetro (la app usará DISTANCIA_AB_2 y R_Medidas)."
+        )
+
+    formats = [p[2] for p in parsed]
+    dominant_fmt = max(set(formats), key=formats.count)
+    L_med = np.array([p[0] for p in parsed], dtype=float)
+    rho_med = np.array([p[1] for p in parsed], dtype=float)
+
+    warnings: list[str] = []
+    if dominant_fmt == "telurómetro_multicolumna":
+        warnings.append(
+            "Detectado formato telurómetro (varias columnas). Se usaron **DISTANCIA_AB_2** (col. 2) "
+            "y **R_Medidas** (col. 5), no el número de lectura."
+        )
+    warnings.extend(_validate_manual_curve(L_med, rho_med))
+
+    order = np.argsort(L_med)
+    return ManualParseResult(
+        L_med=L_med[order],
+        rho_med=rho_med[order],
+        warnings=warnings,
+        format_detected=dominant_fmt,
+        n_lines_parsed=len(parsed),
+    )
+
+
 def parse_sev_file(path: str, col_l: str | None = None, col_rho: str | None = None) -> SevImportResult:
     with open(path, "rb") as fh:
         data = fh.read()

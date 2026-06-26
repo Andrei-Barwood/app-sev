@@ -23,6 +23,7 @@ from sev_import import (
     get_sev_transparency_help,
     load_dataframe_from_upload,
     numeric_columns,
+    parse_manual_sev_text,
     parse_sev_upload,
 )
 from sev_feasibility import assess_feasibility
@@ -275,32 +276,40 @@ elif nav == "⚡ Herramienta SEV":
                     clear_active_dataset(st.session_state)
                     L_med, rho_med = None, None
         elif data_source == "Ingreso manual":
-            st.write("Formato: L, Rho_med (un punto por línea)")
-            manual_data = st.text_area("Datos", "1.0, 100\n3.0, 80\n10.0, 50\n30.0, 60\n100.0, 120")
+            st.caption(
+                "Una línea = un punto. Formato simple: `L, ρ` (ej. `0.6, 339`). "
+                "También puedes pegar filas completas del telurómetro; la app tomará DISTANCIA_AB/2 y R_Medidas."
+            )
+            manual_default = (
+                "0.6, 339\n0.7, 236.7\n1, 123.1\n2, 31.6\n3, 14.95\n"
+                "5, 4.77\n10, 0.79\n12, 0.39"
+            )
+            manual_data = st.text_area("Datos", manual_default, height=180)
             try:
-                import re
-                lines = manual_data.strip().split('\n')
-                parsed_data = []
-                for line in lines:
-                    # Extraer todos los números de la línea (soporta puntos o comas decimales)
-                    nums = re.findall(r'[-+]?\d+(?:[.,]\d+)?', line)
-                    if len(nums) >= 2:
-                        val1 = float(nums[0].replace(',', '.'))
-                        val2 = float(nums[1].replace(',', '.'))
-                        parsed_data.append([val1, val2])
-                
-                if len(parsed_data) == 0:
-                    raise ValueError("No se encontraron números válidos")
-                    
-                data = np.array(parsed_data)
+                manual_result = parse_manual_sev_text(manual_data)
+                for warning in manual_result.warnings:
+                    st.warning(warning)
+                st.caption(
+                    f"Interpretado: {manual_result.n_lines_parsed} puntos "
+                    f"({manual_result.format_detected})."
+                )
                 store_active_dataset(
                     st.session_state,
-                    data[:, 0],
-                    data[:, 1],
+                    manual_result.L_med,
+                    manual_result.rho_med,
                     source=data_source,
                 )
+                manual_sig = f"manual|{manual_result.n_lines_parsed}|{manual_result.format_detected}|{float(manual_result.L_med[0])}"
+                if st.session_state.get("sev_data_signature") != manual_sig:
+                    st.session_state["sev_data_signature"] = manual_sig
+                    model_init = estimate_initial_model(
+                        manual_result.L_med, manual_result.rho_med
+                    )
+                    apply_model_init_to_session(model_init, st.session_state)
+                    st.session_state["auto_optimize_global"] = model_init.use_global_search
             except Exception as e:
-                st.error("Error en formato de datos. Asegúrate de ingresar números válidos para L y Rho.")
+                clear_active_dataset(st.session_state)
+                st.error(f"Error en datos manuales: {e}")
 
         L_med, rho_med = get_active_L_rho(st.session_state)
 
