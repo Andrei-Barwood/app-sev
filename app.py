@@ -114,7 +114,7 @@ if nav == "📚 Tutorial y Guía de Uso":
 elif nav == "⚡ Herramienta SEV":
     with st.sidebar:
         st.header("1. Datos de Entrada")
-        data_source = st.radio("Fuente de datos:", ["Generar teóricos", "Cargar archivo (CSV/Excel)", "Ingreso manual"])
+        data_source = st.radio("Fuente de datos:", ["Cargar archivo (CSV/Excel)", "Generar teóricos", "Ingreso manual"])
         if st.session_state.get("sev_data_source") != data_source:
             clear_active_dataset(st.session_state)
             st.session_state.sev_data_source = data_source
@@ -430,12 +430,19 @@ elif nav == "⚡ Herramienta SEV":
         st.subheader("Importación transparente del archivo")
         st.markdown(get_sev_transparency_help())
 
-        meta1, meta2, meta3 = st.columns(3)
+        meta1, meta2, meta3, meta4 = st.columns(4)
         meta1.metric("Archivo", panel["filename"])
         meta2.metric("Puntos válidos", panel["n_points"])
-        meta3.metric("Columnas activas", f"L: {panel['col_l']}")
+        meta3.metric("Columnas activas", f"L: `{panel['col_l']}` · ρ: `{panel['col_rho']}`")
+        meta4.metric(
+            "ρ medida (min → max)",
+            f"{float(np.min(rho_med)):.2g} → {float(np.max(rho_med)):.2g} Ω·m",
+        )
 
-        st.caption(f"ρ medida desde `{panel['col_rho']}` · Las columnas resaltadas son las que alimentan el modelo.")
+        st.caption(
+            "Las columnas resaltadas en la tabla alimentan el gráfico y la optimización. "
+            "No hay una segunda curva oculta: el gráfico único de abajo usa exactamente estos datos."
+        )
 
         legend1, legend2, legend3 = st.columns(3)
         legend1.markdown("🟩 **Verde** → L (AB/2)")
@@ -444,49 +451,17 @@ elif nav == "⚡ Herramienta SEV":
 
         st.dataframe(
             build_colored_preview(panel["df"], panel["col_l"], panel["col_rho"]),
-            use_container_width=True,
+            width="stretch",
         )
-
-        preview_fig = go.Figure()
-        preview_fig.add_trace(
-            go.Scatter(
-                x=L_med,
-                y=rho_med,
-                mode="markers+lines",
-                name="Curva seleccionada",
-                marker=dict(color="#FFB000", size=9, line=dict(color="#63627C", width=1)),
-                line=dict(color="#A7B7CF", width=1, dash="dot"),
-            )
-        )
-        preview_fig.update_layout(
-            title="Vista previa de la curva con tu selección actual",
-            xaxis_title="L (AB/2) [m]",
-            yaxis_title="ρ medida [Ω·m]",
-            xaxis_type="log",
-            yaxis_type="log",
-            height=320,
-            margin=dict(l=20, r=20, t=50, b=20),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#FFFFFF",
-            font=dict(color="#63627C"),
-        )
-        preview_fig.update_xaxes(gridcolor="#EAEEF4")
-        preview_fig.update_yaxes(gridcolor="#EAEEF4")
-        st.plotly_chart(preview_fig, use_container_width=True)
 
         with st.expander("Guía de columnas detectadas en el archivo"):
             hint_rows = [
                 {"Columna": col, "Rol sugerido": get_column_role_hint(col)}
                 for col in panel["df"].columns
             ]
-            st.dataframe(pd.DataFrame(hint_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(hint_rows), width="stretch", hide_index=True)
 
         st.markdown("---")
-
-    st.caption(
-        f"Gráfico principal y optimización usan el mismo dataset activo "
-        f"({len(L_med)} puntos, fuente: {data_source})."
-    )
 
     if run_opt:
         with st.spinner("Optimizando modelo... (esto puede tardar unos segundos)"):
@@ -517,29 +492,32 @@ elif nav == "⚡ Herramienta SEV":
                 st.rerun()
     # Calcular curva teórica con los parámetros actuales
     rho_calc = calc_rho_a(L_med, st.session_state.rho, st.session_state.h)
-    # === PLOT ===
+    # === PLOT (único gráfico: datos medidos + modelo de capas) ===
     fig = go.Figure()
-    # Datos medidos
     if data_source != "Generar teóricos":
+        measured_label = "Datos medidos"
+        if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
+            measured_label = f"Datos medidos ({active_dataset['filename']})"
         fig.add_trace(go.Scatter(
             x=L_med, y=rho_med,
-            mode='markers',
-            name='Datos Medidos',
-            marker=dict(color='#FFFFB8', size=8, line=dict(color='#63627C', width=1.5))
+            mode="markers+lines",
+            name=measured_label,
+            marker=dict(color="#FFB000", size=9, line=dict(color="#63627C", width=1)),
+            line=dict(color="#A7B7CF", width=1, dash="dot"),
         ))
-    # Curva teórica
-    # Generamos una curva teórica más suave si es necesario, pero usaremos L_med para coincidir puntos
-    # Para que la curva se vea bien, agregamos puntos interpolados
     L_smooth = np.logspace(np.log10(min(L_med)), np.log10(max(L_med)), 100)
     rho_smooth = calc_rho_a(L_smooth, st.session_state.rho, st.session_state.h)
     fig.add_trace(go.Scatter(
         x=L_smooth, y=rho_smooth,
         mode='lines',
-        name='Curva Teórica',
+        name='Modelo de capas (teórico)',
         line=dict(color='#485199', width=3)
     ))
+    chart_title = "Curva de Sondeo Eléctrico Vertical"
+    if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
+        chart_title = f"Curva SEV — {active_dataset['filename']}"
     fig.update_layout(
-        title='Curva de Sondeo Eléctrico Vertical',
+        title=chart_title,
         xaxis_title='Distancia L (AB/2) [m]',
         yaxis_title='Resistividad Aparente [Ω·m]',
         xaxis_type="log",
@@ -547,11 +525,20 @@ elif nav == "⚡ Herramienta SEV":
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='#FFFFFF',
         font=dict(color='#63627C'),
-        height=500
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     fig.update_xaxes(gridcolor='#EAEEF4', zerolinecolor='#A7B7CF')
     fig.update_yaxes(gridcolor='#EAEEF4', zerolinecolor='#A7B7CF')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
+    if data_source != "Generar teóricos":
+        st.caption(
+            f"**Amarillo** = {len(L_med)} puntos medidos en campo "
+            f"(ρ {float(np.min(rho_med)):.2g}→{float(np.max(rho_med)):.2g} Ω·m). "
+            f"**Azul** = respuesta del modelo de capas actual (ajústalo con «Ajustar»)."
+        )
+    else:
+        st.caption(f"Curva teórica generada ({len(L_med)} puntos). Fuente: {data_source}.")
     # === TABLA DE RESULTADOS ===
     st.subheader("Resultados y Error")
     df_results = pd.DataFrame({
@@ -631,7 +618,7 @@ elif nav == "⚡ Herramienta SEV":
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#63627C')
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig_bar, width="stretch")
 
 elif nav == "🏗️ Diseño Malla BT y Reporte":
     st.header("🏗️ Diseño Malla BT y Reporte")
@@ -799,7 +786,7 @@ elif nav == "🏗️ Diseño Malla BT y Reporte":
             plot_bgcolor='rgba(0,0,0,0.05)',
             margin=dict(l=20, r=20, t=40, b=20)
         )
-        st.plotly_chart(fig_malla, use_container_width=True)
+        st.plotly_chart(fig_malla, width="stretch")
 
         st.markdown("---")
         st.subheader("Exportar para AutoCAD")
