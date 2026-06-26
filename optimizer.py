@@ -147,6 +147,34 @@ def _alternate_layer_configs(
                 [False, False],
             )
         )
+    elif n_layers == 4:
+        mid_h = float(np.median(initial_h)) if initial_h else 1.0
+        configs.append(
+            (
+                [initial_rho[0], initial_rho[-1]],
+                [mid_h],
+                [False, False],
+                [False],
+            )
+        )
+        configs.append(
+            (
+                initial_rho[:3],
+                initial_h[:2],
+                [False, False, False],
+                [False, False],
+            )
+        )
+        if rho_med is not None:
+            rho_arr = np.asarray(rho_med, dtype=float)
+            configs.append(
+                (
+                    [float(np.max(rho_arr)), float(np.median(rho_arr)), float(np.min(rho_arr) * 2), float(np.min(rho_arr))],
+                    [max(0.001, mid_h * 0.05), max(0.01, mid_h * 0.2), max(0.1, mid_h)],
+                    [False, False, False, False],
+                    [False, False, False],
+                )
+            )
     return configs
 
 

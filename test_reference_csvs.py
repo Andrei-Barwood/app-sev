@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from core import calc_rho_a
-from model_init import estimate_initial_model
+from model_init import build_initial_model_for_layers, estimate_initial_model
 from optimizer import run_optimization
 from sev_feasibility import assess_feasibility
 from sev_import import extract_reference_benchmark, parse_sev_file
@@ -60,6 +60,26 @@ def test_04_csv_detects_field_columns_not_calculated():
     assert result.col_rho == "R_Medidas"
     assert result.rho_med[0] == 339.0
     assert result.rho_med[-1] == 0.39
+
+
+def test_05_csv_four_layers_still_rejected_but_improves_r2():
+    result = parse_sev_file(str(TESTS_DIR / "05.csv"))
+    init4 = build_initial_model_for_layers(result.L_med, result.rho_med, 4)
+    assert init4.n_layers == 4
+    best_rho, best_h, _, _ = run_optimization(
+        result.L_med,
+        result.rho_med,
+        init4.rho,
+        init4.h,
+        [False] * 4,
+        [False] * 3,
+        use_global=True,
+        try_alternate_layers=True,
+    )
+    calc = calc_rho_a(result.L_med, best_rho, best_h)
+    fit = assess_fit(result.L_med, result.rho_med, calc)
+    assert not fit.accepted
+    assert fit.r2_log >= 0.70
 
 
 def test_02_and_03_are_same_reference_as_01():

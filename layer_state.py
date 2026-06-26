@@ -124,6 +124,7 @@ def apply_model_init_to_session(init, st_session: Any) -> None:
         "init_rmse": init.init_rmse,
         "init_r2": init.init_r2,
         "use_global_search": init.use_global_search,
+        "recommended_n_layers": getattr(init, "recommended_n_layers", init.n_layers),
         "notes": init.notes,
         "rho": list(st_session.rho),
         "h": list(st_session.h),

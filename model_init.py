@@ -30,6 +30,7 @@ class ModelInitResult:
     init_rmse: float
     init_r2: float
     use_global_search: bool
+    recommended_n_layers: int = 3
     notes: list[str] = field(default_factory=list)
 
 
@@ -124,8 +125,8 @@ def _estimate_thicknesses(L: np.ndarray, rho: np.ndarray, n_layers: int) -> list
     else:
         candidates = list(np.geomspace(max(float(L[1]), float(L[0]) * 1.2), float(L[-2]), n_layers - 1))
 
-    h_min = max(float(np.min(L)) * 0.05, 0.05)
-    h_max = max(float(np.max(L)) * 2.0, h_min * 2.0)
+    h_min = max(float(np.min(L)) * 0.002, 0.001)
+    h_max = max(float(np.max(L)) * 4.0, h_min * 20.0)
     cleaned = [float(np.clip(h, h_min, h_max)) for h in candidates]
     cleaned.sort()
     for i in range(1, len(cleaned)):
@@ -155,8 +156,12 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     curve_type = _detect_curve_type(L, rho)
     contrast = float(np.max(rho) / max(float(np.min(rho)), 1e-3))
     n_layers = 2 if curve_type in {"DESC2", "ASC2"} else 3
+    recommended_n_layers = n_layers
     if curve_type in {"Q", "DESC2"} and contrast > 80:
         n_layers = 2
+        recommended_n_layers = 4 if contrast > 120 else 3
+    elif contrast > 200:
+        recommended_n_layers = max(n_layers, 4)
     smoothed = _smooth_curve(rho)
 
     rho_values = _segment_rho_values(L, rho, n_layers)
@@ -164,6 +169,8 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
         rho_values = _adjust_rho_for_curve_type(rho_values, curve_type, smoothed)
     elif n_layers == 2:
         rho_values = [max(0.1, float(smoothed[0])), max(0.1, float(smoothed[-1]))]
+    elif n_layers >= 4:
+        rho_values = _segment_rho_values(L, rho, n_layers)
 
     if n_layers == 2 and curve_type in {"Q", "DESC2"}:
         h_values = [_estimate_transition_thickness(L, rho)]
@@ -183,6 +190,11 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
         notes.append(
             "Curva con contraste extremo (ρ máx/ρ mín > 80). "
             "El modelo 1D puede no reproducir todos los puntos; verifica columnas y usa búsqueda global."
+        )
+    if recommended_n_layers > n_layers:
+        notes.append(
+            f"Prueba con **{recommended_n_layers} capas** (botón en Modelo de Capas) "
+            "para curvas de alto contraste."
         )
     if contrast > 500:
         notes.append("La curva abarca varios órdenes de magnitud; conviene usar búsqueda global.")
@@ -205,7 +217,50 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
         init_rmse=init_rmse,
         init_r2=init_r2,
         use_global_search=score < 0.75 or init_r2 < 0.35,
+        recommended_n_layers=recommended_n_layers,
         notes=notes,
+    )
+
+
+def build_initial_model_for_layers(L: np.ndarray, rho: np.ndarray, n_layers: int) -> ModelInitResult:
+    """Construye un modelo inicial para un número de capas solicitado (p. ej. 4)."""
+    base = estimate_initial_model(L, rho)
+    n_layers = max(2, min(10, int(n_layers)))
+    if n_layers == base.n_layers:
+        return base
+
+    L = np.asarray(L, dtype=float)
+    rho = np.asarray(rho, dtype=float)
+    order = np.argsort(L)
+    L = L[order]
+    rho = rho[order]
+    smoothed = _smooth_curve(rho)
+
+    if n_layers == 2:
+        rho_values = [max(0.1, float(smoothed[0])), max(0.1, float(smoothed[-1]))]
+        h_values = [_estimate_transition_thickness(L, rho)]
+    elif n_layers == 3:
+        rho_values = _adjust_rho_for_curve_type(
+            _segment_rho_values(L, rho, 3), base.curve_type, smoothed
+        )
+        h_values = _estimate_thicknesses(L, rho, 3)
+    else:
+        rho_values = _segment_rho_values(L, rho, n_layers)
+        h_values = _estimate_thicknesses(L, rho, n_layers)
+
+    init_rmse, init_r2 = _metrics(L, rho, rho_values, h_values)
+    return ModelInitResult(
+        n_layers=n_layers,
+        rho=rho_values,
+        h=h_values,
+        curve_type=base.curve_type,
+        mooney_key=base.mooney_key,
+        coherence_score=base.coherence_score,
+        init_rmse=init_rmse,
+        init_r2=init_r2,
+        use_global_search=True,
+        recommended_n_layers=n_layers,
+        notes=list(base.notes),
     )
 
 

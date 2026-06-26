@@ -24,6 +24,7 @@ class FeasibilityReport:
     can_pass_strict: bool
     curve_type: str
     n_layers_tried: int
+    suggested_n_layers: int
 
 
 def _quick_mean_error_pct(
@@ -139,6 +140,10 @@ def assess_feasibility(L_med: np.ndarray, rho_med: np.ndarray) -> FeasibilityRep
             f"(promedio). El criterio estricto (todos los puntos ≤ 5 %) puede no lograrse."
         )
 
+    suggested = init.recommended_n_layers
+    if contrast > 120 and suggested < 4:
+        suggested = 4
+
     return FeasibilityReport(
         level=level,
         title=title,
@@ -150,4 +155,5 @@ def assess_feasibility(L_med: np.ndarray, rho_med: np.ndarray) -> FeasibilityRep
         can_pass_strict=can_pass_strict,
         curve_type=init.curve_type,
         n_layers_tried=2,
+        suggested_n_layers=suggested,
     )

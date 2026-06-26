@@ -26,7 +26,9 @@ from sev_import import (
     parse_sev_upload,
 )
 from sev_feasibility import assess_feasibility
-from model_init import build_data_signature, estimate_initial_model
+from model_init import build_data_signature, build_initial_model_for_layers, estimate_initial_model
+from sev_geometry import inspect_electrode_geometry
+from sev_report import build_sev_pdf_report
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
 from sev_metrics import (
     ACCEPTANCE_ERROR_PCT,
@@ -238,6 +240,11 @@ elif nav == "⚡ Herramienta SEV":
                     for warning in import_result.warnings:
                         st.warning(warning)
 
+                    geometry = inspect_electrode_geometry(import_result.df, import_result.col_l)
+                    if geometry:
+                        for msg in geometry.get("messages", []):
+                            st.info(f"**Geometría de electrodos:** {msg}")
+
                     data_signature = build_data_signature(
                         uploaded_file.name,
                         import_result.col_l,
@@ -352,6 +359,32 @@ elif nav == "⚡ Herramienta SEV":
                     st.session_state["auto_optimize_global"] = model_init.use_global_search
                     st.rerun()
 
+        model_report = st.session_state.get("model_init_report", {})
+        recommended_layers = int(model_report.get("recommended_n_layers", st.session_state.n_layers))
+        feasibility_panel = (
+            st.session_state.get("sev_import_panel", {}).get("feasibility")
+            if st.session_state.get("sev_import_panel")
+            else None
+        )
+        if feasibility_panel is not None:
+            recommended_layers = max(recommended_layers, int(feasibility_panel.suggested_n_layers))
+        if (
+            recommended_layers > int(st.session_state.n_layers)
+            and rho_med is not None
+            and len(rho_med) >= 3
+        ):
+            if st.button(
+                f"Probar con {recommended_layers} capas (curva difícil)",
+                key="btn_use_recommended_layers",
+                help="Inicializa el modelo con más capas para datos de alto contraste.",
+            ):
+                model_init = build_initial_model_for_layers(
+                    np.asarray(L_med), np.asarray(rho_med), recommended_layers
+                )
+                apply_model_init_to_session(model_init, st.session_state)
+                st.session_state["auto_optimize_global"] = True
+                st.rerun()
+
         ensure_layer_lengths(st.session_state, int(st.session_state.n_layers))
         n_layers = st.number_input(
             "Número de capas",
@@ -464,6 +497,7 @@ elif nav == "⚡ Herramienta SEV":
     L_med = active_dataset["L_med"]
     rho_med = active_dataset["rho_med"]
     data_source = active_dataset.get("source", data_source)
+    model_report = st.session_state.get("model_init_report", {})
 
     if data_source == "Cargar archivo (CSV/Excel)" and st.session_state.get("sev_import_panel"):
         panel = st.session_state["sev_import_panel"]
@@ -708,9 +742,8 @@ elif nav == "⚡ Herramienta SEV":
     st.dataframe(style_results_table(df_results), width="stretch")
     # === EXPORTAR ===
     st.subheader("Exportar Resultados")
-    col_e1, col_e2 = st.columns(2)
+    col_e1, col_e2, col_e3 = st.columns(3)
     with col_e1:
-        # CSV Export
         csv = df_results.to_csv(index=False).encode('utf-8')
         st.download_button(
             "Descargar tabla (CSV)",
@@ -720,11 +753,12 @@ elif nav == "⚡ Herramienta SEV":
             key='download-csv'
         )
     with col_e2:
-        # Parámetros Export (JSON)
         params_dict = {
             "n_layers": len(st.session_state.rho),
             "rho": st.session_state.rho,
-            "h": st.session_state.h
+            "h": st.session_state.h,
+            "fit_accepted": fit_report.accepted,
+            "fit_mean_error_pct": fit_report.mean_error_pct,
         }
         json_str = json.dumps(params_dict, indent=4)
         st.download_button(
@@ -732,6 +766,33 @@ elif nav == "⚡ Herramienta SEV":
             json_str,
             "modelo_sev.json",
             "application/json"
+        )
+    with col_e3:
+        ref_note = ""
+        if ref_bench is not None:
+            ref_note = (
+                f"Referencia CSV: error prom. {ref_bench['mean_error_pct']:.2f} % "
+                f"(tu ajuste {fit_report.mean_error_pct:.2f} %)."
+            )
+        pdf_bytes = build_sev_pdf_report(
+            filename=active_dataset.get("filename", ""),
+            col_l=active_dataset.get("col_l", ""),
+            col_rho=active_dataset.get("col_rho", ""),
+            L_med=L_med,
+            rho_med=rho_med,
+            rho_calc=rho_calc,
+            rho_layers=list(st.session_state.rho),
+            h_layers=list(st.session_state.h),
+            fit=fit_report,
+            curve_type=model_report.get("curve_type", ""),
+            reference_note=ref_note,
+        )
+        st.download_button(
+            "Descargar informe (PDF)",
+            pdf_bytes,
+            "informe_sev.pdf",
+            "application/pdf",
+            key="download-pdf-report",
         )
     # Sección transversal del terreno
     st.subheader("Sección Geoeléctrica")
