@@ -17,6 +17,7 @@ from sev_import import (
     assess_column_selection,
     build_colored_preview,
     detect_l_rho_columns,
+    extract_reference_benchmark,
     get_column_role_hint,
     get_import_format_help,
     get_sev_transparency_help,
@@ -24,6 +25,7 @@ from sev_import import (
     numeric_columns,
     parse_sev_upload,
 )
+from sev_feasibility import assess_feasibility
 from model_init import build_data_signature, estimate_initial_model
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
 from sev_metrics import (
@@ -195,16 +197,31 @@ elif nav == "⚡ Herramienta SEV":
                         import_result.suggested_col_rho,
                     )
 
+                    L_med, rho_med = import_result.L_med, import_result.rho_med
+                    feasibility = (
+                        assess_feasibility(L_med, rho_med)
+                        if not any(item.level == "error" for item in assessments)
+                        else None
+                    )
+                    reference_benchmark = extract_reference_benchmark(
+                        import_result.df,
+                        import_result.col_l,
+                        import_result.col_rho,
+                        L_med,
+                        rho_med,
+                    )
                     store_active_dataset(
                         st.session_state,
-                        import_result.L_med,
-                        import_result.rho_med,
+                        L_med,
+                        rho_med,
                         source=data_source,
                         filename=uploaded_file.name,
                         col_l=import_result.col_l,
                         col_rho=import_result.col_rho,
                         df=import_result.df,
                         assessments=assessments,
+                        feasibility=feasibility,
+                        reference_benchmark=reference_benchmark,
                     )
                     L_med, rho_med = get_active_L_rho(st.session_state)
 
@@ -467,6 +484,24 @@ elif nav == "⚡ Herramienta SEV":
             "No hay una segunda curva oculta: el gráfico único de abajo usa exactamente estos datos."
         )
 
+        feasibility = panel.get("feasibility")
+        if feasibility is not None:
+            if feasibility.level == "success":
+                st.success(f"**{feasibility.title}:** {feasibility.message}")
+            elif feasibility.level == "error":
+                st.error(f"**{feasibility.title}:** {feasibility.message}")
+            else:
+                st.warning(f"**{feasibility.title}:** {feasibility.message}")
+
+        ref_bench = panel.get("reference_benchmark")
+        if ref_bench is not None:
+            st.info(
+                f"**Referencia del archivo** (`{ref_bench['col_calc']}`): error prom. "
+                f"{ref_bench['mean_error_pct']:.2f} %, máx {ref_bench['max_error_pct']:.2f} % "
+                f"({ref_bench['n_over_5pct']}/{ref_bench['n_points']} puntos > 5 %). "
+                "Esa es la mejor curva documentada en el CSV del curso; tu optimización debería acercarse."
+            )
+
         legend1, legend2, legend3 = st.columns(3)
         legend1.markdown("🟩 **Verde** → L (AB/2)")
         legend2.markdown("🟨 **Amarillo** → ρ medida")
@@ -659,6 +694,17 @@ elif nav == "⚡ Herramienta SEV":
         "Verde en la tabla = punto dentro del 5 % · Rojo = fuera de tolerancia. "
         "«Error log (%)» complementa la lectura en curvas log-log."
     )
+    ref_bench = None
+    if st.session_state.get("sev_import_panel"):
+        ref_bench = st.session_state["sev_import_panel"].get("reference_benchmark")
+    if ref_bench is not None:
+        bench_delta = fit_report.mean_error_pct - ref_bench["mean_error_pct"]
+        st.info(
+            f"Comparación con referencia del CSV: tu error prom. {fit_report.mean_error_pct:.2f} % "
+            f"vs referencia {ref_bench['mean_error_pct']:.2f} % "
+            f"({'mejor' if bench_delta < -0.05 else 'similar' if abs(bench_delta) <= 0.1 else 'peor'} "
+            f"por {abs(bench_delta):.2f} p.p.)."
+        )
     st.dataframe(style_results_table(df_results), width="stretch")
     # === EXPORTAR ===
     st.subheader("Exportar Resultados")

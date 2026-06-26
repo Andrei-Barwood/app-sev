@@ -479,6 +479,56 @@ def parse_sev_upload(
     )
 
 
+def _find_column_by_tokens(df: pd.DataFrame, tokens: tuple[str, ...]) -> str | None:
+    for col in df.columns:
+        norm = _normalize_col(str(col))
+        if any(token in norm for token in tokens):
+            return str(col)
+    return None
+
+
+def extract_reference_benchmark(
+    df: pd.DataFrame,
+    col_l: str,
+    col_rho: str,
+    L_med: np.ndarray,
+    rho_med: np.ndarray,
+) -> dict | None:
+    """Extrae benchmark del curso si el CSV trae columnas de referencia (p. ej. 01.csv)."""
+    col_calc = _find_column_by_tokens(df, ("rho_calculado", "ro_calculado", "calculado"))
+    col_err = _find_column_by_tokens(df, ("error",))
+    if col_calc is None:
+        return None
+
+    work = df[[col_l, col_rho, col_calc]].copy()
+    if col_err:
+        work[col_err] = df[col_err]
+    work[col_l] = _to_numeric_series(work[col_l])
+    work[col_rho] = _to_numeric_series(work[col_rho])
+    work[col_calc] = _to_numeric_series(work[col_calc])
+    work = work.dropna(subset=[col_l, col_rho, col_calc])
+    work = work[(work[col_l] > 0) & (work[col_rho] > 0) & (work[col_calc] > 0)]
+    if work.empty:
+        return None
+
+    if col_err:
+        work[col_err] = _to_numeric_series(work[col_err])
+        ref_errors = work[col_err].to_numpy(dtype=float)
+    else:
+        ref_errors = np.abs((work[col_rho] - work[col_calc]) / work[col_rho]) * 100.0
+
+    return {
+        "col_calc": col_calc,
+        "col_error": col_err,
+        "mean_error_pct": float(np.mean(ref_errors)),
+        "max_error_pct": float(np.max(ref_errors)),
+        "n_over_5pct": int(np.sum(ref_errors > 5.0)),
+        "n_points": int(len(ref_errors)),
+        "rho_calc": work[col_calc].to_numpy(dtype=float),
+        "errors_pct": ref_errors,
+    }
+
+
 def parse_sev_file(path: str, col_l: str | None = None, col_rho: str | None = None) -> SevImportResult:
     with open(path, "rb") as fh:
         data = fh.read()

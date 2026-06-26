@@ -18,6 +18,8 @@ def store_active_dataset(
     col_rho: str = "",
     df=None,
     assessments=None,
+    feasibility=None,
+    reference_benchmark=None,
 ) -> None:
     L_arr = np.asarray(L_med, dtype=float).copy()
     rho_arr = np.asarray(rho_med, dtype=float).copy()
@@ -45,6 +47,8 @@ def store_active_dataset(
             "n_points": int(len(L_arr)),
             "L_med": L_arr,
             "rho_med": rho_arr,
+            "feasibility": feasibility,
+            "reference_benchmark": reference_benchmark,
         }
     else:
         st_session.pop("sev_import_panel", None)
