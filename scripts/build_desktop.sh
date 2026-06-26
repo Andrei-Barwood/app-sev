@@ -41,6 +41,7 @@ mkdir -p "$DIST_DIR"
 
 if [[ "$PLATFORM" == windows* ]] || [[ "$PLATFORM" == mingw* ]]; then
   cp dist/AppSEV.exe "$DIST_DIR/"
+  cp scripts/setup_windows.ps1 "$DIST_DIR/"
   powershell -NoProfile -Command "Compress-Archive -Path '${DIST_DIR}' -DestinationPath 'dist/release/${OUT_NAME}.zip' -Force"
 else
   cp dist/AppSEV "$DIST_DIR/"

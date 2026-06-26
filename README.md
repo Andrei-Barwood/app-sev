@@ -35,10 +35,23 @@ En la sección [Releases](https://github.com/Andrei-Barwood/app-sev/releases) en
 
 1. Descarga el archivo correspondiente a tu sistema operativo.
 2. Descomprime el archivo.
-3. Ejecuta `AppSEV` (macOS/Linux) o `AppSEV.exe` (Windows).
+
+**Windows — ejecutar antes del binario:**
+
+El ejecutable standalone usa una ventana de escritorio nativa que depende de **.NET Framework 4.8+** y **Microsoft Edge WebView2 Runtime**. Antes de abrir `AppSEV.exe`, ejecuta el script de preconfiguración incluido en el `.zip`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_windows.ps1
+```
+
+El script solicitará permisos de administrador, comprobará si los componentes ya están instalados y, si faltan, los descargará e instalará automáticamente (vía `winget` o instalador directo de Microsoft).
+
+También está disponible en el repositorio en `scripts/setup_windows.ps1`.
+
+3. Ejecuta `AppSEV.exe` (Windows) o `AppSEV` (macOS/Linux).
 4. La aplicación se abrirá en una ventana de escritorio nativa.
 
-> **Windows:** requiere [.NET Framework 4+](https://dotnet.microsoft.com/download/dotnet) y [Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2).
+> **Windows (instalación manual):** si prefieres no usar el script, instala [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48) y [Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2) manualmente antes de abrir el ejecutable.
 
 ## Instalación Local
 
