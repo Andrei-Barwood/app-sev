@@ -25,7 +25,9 @@ Herramienta profesional para el modelado y ajuste automático de curvas de Sonde
 
 ## Descarga (binarios standalone)
 
-En la sección [Releases](https://github.com/Andrei-Barwood/app-sev/releases) encontrarás ejecutables listos para usar, sin instalar Python ni dependencias:
+**Versión actual: [v1.2.0](https://github.com/Andrei-Barwood/app-sev/releases/tag/v1.2.0)**
+
+En [Releases](https://github.com/Andrei-Barwood/app-sev/releases) están los ejecutables listos para usar, sin instalar Python ni dependencias:
 
 | Plataforma | Archivo |
 |------------|---------|
@@ -33,9 +35,9 @@ En la sección [Releases](https://github.com/Andrei-Barwood/app-sev/releases) en
 | **macOS** | `app-sev-macos.zip` |
 | **Linux** | `app-sev-linux.tar.gz` |
 
-> **Usuarios de Windows en v1.1:** el zip original de [v1.1](https://github.com/Andrei-Barwood/app-sev/releases/tag/v1.1) no incluía el script de preconfiguración. Descarga el patch [v1.1.1](https://github.com/Andrei-Barwood/app-sev/releases/tag/v1.1.1), que república `app-sev-windows.zip` con `setup_windows.ps1` incluido. **A partir de v1.2** el script ya viene en el zip de fábrica y este patch deja de ser necesario.
+> **Versiones anteriores (v1.0, v1.1, v1.1.1) ya no se publican.** Tenían fallos al importar CSV con varias columnas y al optimizar el modelo de capas. Descarga siempre **v1.2.0**; es el mismo servicio (SEV + malla BT), con importación, optimización y exportación AutoCAD corregidas.
 
-1. Descarga el archivo correspondiente a tu sistema operativo.
+1. Descarga el archivo de **v1.2.0** para tu sistema operativo.
 2. Descomprime el archivo.
 
 **Windows — ejecutar antes del binario:**
@@ -47,8 +49,6 @@ powershell -ExecutionPolicy Bypass -File .\setup_windows.ps1
 ```
 
 El script solicitará permisos de administrador, comprobará si los componentes ya están instalados y, si faltan, los descargará e instalará automáticamente (vía `winget` o instalador directo de Microsoft).
-
-Si descargaste **v1.1** antes de este patch, puedes usar el script desde el repositorio (`scripts/setup_windows.ps1`) o reemplazar tu zip por el de **v1.1.1**.
 
 3. Ejecuta `AppSEV.exe` (Windows) o `AppSEV` (macOS/Linux).
 4. La aplicación se abrirá en una ventana de escritorio nativa.

@@ -106,8 +106,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare release notes (v1.2.0)
+        if: github.ref_name == 'v1.2.0'
+        run: cp docs/release_notes_v1.2.0.md release_notes.md
+
+      - name: Create GitHub Release (v1.2.0)
+        if: github.ref_name == 'v1.2.0'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          tag_name: ${{ github.ref_name }}
+          name: v1.2.0 — Importación SEV, optimización y exportación AutoCAD
+          body_path: release_notes.md
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create GitHub Release
-        if: github.ref_name != 'v1.1.1'
+        if: github.ref_name != 'v1.1.1' && github.ref_name != 'v1.2.0'
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
