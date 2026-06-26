@@ -24,10 +24,16 @@ from sev_import import (
     numeric_columns,
     parse_sev_upload,
 )
-from model_init import (
+from model_init import build_data_signature, estimate_initial_model
+from layer_state import (
     apply_model_init_to_session,
-    build_data_signature,
-    estimate_initial_model,
+    bump_layer_widget_generation,
+    extend_layers_from_data,
+    read_layer_model_from_widgets,
+    set_layer_model,
+    sync_lists_from_widgets,
+    widget_key,
+    ensure_layer_lengths,
 )
 
 st.set_page_config(page_title="App SEV", page_icon="⚡", layout="wide")
@@ -54,6 +60,10 @@ if 'fixed_rho' not in st.session_state:
     st.session_state.fixed_rho = [False, False, False]
 if 'fixed_h' not in st.session_state:
     st.session_state.fixed_h = [False, False]
+if 'n_layers' not in st.session_state:
+    st.session_state.n_layers = len(st.session_state.rho)
+if 'layer_widget_generation' not in st.session_state:
+    st.session_state.layer_widget_generation = 0
 
 # === SIDEBAR Y NAVEGACIÓN ===
 with st.sidebar:
@@ -206,11 +216,9 @@ elif nav == "⚡ Herramienta SEV":
                         if not has_column_errors:
                             model_init = estimate_initial_model(L_med, rho_med)
                             apply_model_init_to_session(model_init, st.session_state)
-                            st.session_state["auto_optimize_pending"] = model_init.coherence_score >= 0.45
                             st.session_state["auto_optimize_global"] = model_init.use_global_search
                         else:
                             st.session_state.pop("model_init_report", None)
-                            st.session_state["auto_optimize_pending"] = False
                 except Exception as e:
                     st.session_state.pop("sev_import_panel", None)
                     st.error(f"Error al leer el archivo: {e}")
@@ -259,18 +267,18 @@ elif nav == "⚡ Herramienta SEV":
                 )
 
         ref_choice = st.selectbox("Seleccionar modelo base:", list(MOONEY_ORELLANA_REF.keys()), index=suggested_index)
-        if st.button("Cargar Curva de Referencia"):
+        if st.button("Cargar Curva de Referencia", key="btn_load_ref_curve"):
             if ref_choice != "Personalizado":
-                st.session_state.rho = MOONEY_ORELLANA_REF[ref_choice]["rho"].copy()
-                st.session_state.h = MOONEY_ORELLANA_REF[ref_choice]["h"].copy()
-                st.session_state.fixed_rho = [False] * len(st.session_state.rho)
-                st.session_state.fixed_h = [False] * len(st.session_state.h)
-                
-                # Forzar a los widgets a tomar los nuevos valores
-                for k in list(st.session_state.keys()):
-                    if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
-                        del st.session_state[k]
+                ref = MOONEY_ORELLANA_REF[ref_choice]
+                set_layer_model(
+                    st.session_state,
+                    ref["rho"].copy(),
+                    ref["h"].copy(),
+                )
+                st.session_state.pop("model_init_report", None)
                 st.rerun()
+            else:
+                st.warning("Selecciona un modelo Mooney-Orellana distinto de Personalizado.")
         st.header("3. Modelo de Capas")
         if (
             data_source == "Cargar archivo (CSV/Excel)"
@@ -288,58 +296,81 @@ elif nav == "⚡ Herramienta SEV":
                     for note in report.get("notes", []):
                         st.caption(f"• {note}")
             with recalc_cols[1]:
-                if st.button("Recalcular desde CSV", help="Vuelve a estimar ρ y h a partir de la tabla importada"):
+                if st.button("Recalcular desde CSV", key="btn_recalc_csv", help="Vuelve a estimar ρ y h a partir de la tabla importada"):
                     model_init = estimate_initial_model(np.asarray(L_med), np.asarray(rho_med))
                     apply_model_init_to_session(model_init, st.session_state)
                     st.session_state["auto_optimize_global"] = model_init.use_global_search
                     st.rerun()
 
-        n_layers = st.number_input("Número de capas", min_value=2, max_value=10, value=len(st.session_state.rho))
-        if n_layers != len(st.session_state.rho):
+        ensure_layer_lengths(st.session_state, int(st.session_state.n_layers))
+        n_layers = st.number_input(
+            "Número de capas",
+            min_value=2,
+            max_value=10,
+            value=int(st.session_state.n_layers),
+            key=widget_key(st.session_state, "n", 0),
+        )
+        n_layers = int(n_layers)
+        if n_layers != int(st.session_state.n_layers):
+            st.session_state.n_layers = n_layers
             if n_layers > len(st.session_state.rho):
-                st.session_state.rho.extend([100.0] * (n_layers - len(st.session_state.rho)))
-                st.session_state.h.extend([10.0] * (n_layers - 1 - len(st.session_state.h)))
-                st.session_state.fixed_rho.extend([False] * (n_layers - len(st.session_state.fixed_rho)))
-                st.session_state.fixed_h.extend([False] * (n_layers - 1 - len(st.session_state.fixed_h)))
+                extend_layers_from_data(
+                    st.session_state,
+                    n_layers,
+                    np.asarray(L_med) if L_med is not None else None,
+                    np.asarray(rho_med) if rho_med is not None else None,
+                )
             else:
                 st.session_state.rho = st.session_state.rho[:n_layers]
-                st.session_state.h = st.session_state.h[:n_layers-1]
+                st.session_state.h = st.session_state.h[: n_layers - 1]
                 st.session_state.fixed_rho = st.session_state.fixed_rho[:n_layers]
-                st.session_state.fixed_h = st.session_state.fixed_h[:n_layers-1]
-            
-            # Limpiar widgets obsoletos
-            for k in list(st.session_state.keys()):
-                if k.startswith("rho_") or k.startswith("h_") or k.startswith("frho_") or k.startswith("fh_"):
-                    del st.session_state[k]
+                st.session_state.fixed_h = st.session_state.fixed_h[: n_layers - 1]
+            ensure_layer_lengths(st.session_state, n_layers)
+            bump_layer_widget_generation(st.session_state)
             st.rerun()
+
         st.markdown("---")
-        # Inputs para parámetros
         for i in range(n_layers):
             st.write(f"**Capa {i+1}**")
             col1, col2 = st.columns(2)
             with col1:
-                val_rho = max(0.1, float(st.session_state.rho[i]))
-                st.session_state.rho[i] = st.number_input(f"ρ_{i+1} (Ω·m)", min_value=0.1, value=val_rho, key=f"rho_{i}")
-                st.session_state.fixed_rho[i] = st.checkbox("Fijar ρ", value=st.session_state.fixed_rho[i], key=f"frho_{i}")
+                st.number_input(
+                    f"ρ_{i+1} (Ω·m)",
+                    min_value=0.1,
+                    value=max(0.1, float(st.session_state.rho[i])),
+                    key=widget_key(st.session_state, "rho", i),
+                )
+                st.checkbox(
+                    "Fijar ρ",
+                    value=bool(st.session_state.fixed_rho[i]),
+                    key=widget_key(st.session_state, "frho", i),
+                )
             with col2:
                 if i < n_layers - 1:
-                    val_h = max(0.1, float(st.session_state.h[i]))
-                    st.session_state.h[i] = st.number_input(f"h_{i+1} (m)", min_value=0.1, value=val_h, key=f"h_{i}")
-                    st.session_state.fixed_h[i] = st.checkbox("Fijar h", value=st.session_state.fixed_h[i], key=f"fh_{i}")
+                    st.number_input(
+                        f"h_{i+1} (m)",
+                        min_value=0.1,
+                        value=max(0.1, float(st.session_state.h[i])),
+                        key=widget_key(st.session_state, "h", i),
+                    )
+                    st.checkbox(
+                        "Fijar h",
+                        value=bool(st.session_state.fixed_h[i]),
+                        key=widget_key(st.session_state, "fh", i),
+                    )
                 else:
                     st.write("h = ∞")
+
+        sync_lists_from_widgets(st.session_state, n_layers)
+
         st.header("4. Optimización")
-        opt_method = st.radio("Método de Ajuste:", ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"], help="El Refinamiento Local usa tus valores manuales como punto de partida. La Búsqueda Global ignora tus valores y explora desde cero.")
-        
-        # Botón normal de ajuste
-        run_opt = st.button("Ajustar", type="primary")
-        
-        if st.session_state.get('auto_optimize_pending', False):
-            run_opt = True
-            st.session_state['auto_optimize_pending'] = False
-            if st.session_state.get('auto_optimize_global', False):
-                opt_method = "Búsqueda Global (Automático)"
-                st.caption("Optimización automática iniciada con búsqueda global según la coherencia del CSV.")
+        opt_method = st.radio(
+            "Método de Ajuste:",
+            ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"],
+            key="opt_method_radio",
+            help="El Refinamiento Local usa los valores actuales del modelo de capas. La Búsqueda Global explora un rango más amplio.",
+        )
+        run_opt = st.button("Ajustar", type="primary", key="btn_run_opt")
             
         if 'opt_success_msg' in st.session_state:
             st.success(st.session_state['opt_success_msg'])
@@ -431,20 +462,20 @@ elif nav == "⚡ Herramienta SEV":
                     or st.session_state.get("auto_optimize_global", False)
                 )
                 st.session_state["auto_optimize_global"] = False
-                best_rho, best_h, rmse, r2 = run_optimization(
-                    L_med, rho_med, 
-                    st.session_state.rho, st.session_state.h,
-                    st.session_state.fixed_rho, st.session_state.fixed_h,
-                    use_global=use_global
+                opt_rho, opt_h, opt_fixed_rho, opt_fixed_h = read_layer_model_from_widgets(
+                    st.session_state, int(st.session_state.n_layers)
                 )
-                st.session_state.rho = list(best_rho)
-                st.session_state.h = list(best_h)
-                
-                # Actualizar el estado de los widgets para que la UI los muestre
-                for k in list(st.session_state.keys()):
-                    if k.startswith("rho_") or k.startswith("h_"):
-                        del st.session_state[k]
-                
+                best_rho, best_h, rmse, r2 = run_optimization(
+                    L_med,
+                    rho_med,
+                    opt_rho,
+                    opt_h,
+                    opt_fixed_rho,
+                    opt_fixed_h,
+                    use_global=use_global,
+                )
+                set_layer_model(st.session_state, best_rho, best_h, fixed_rho=opt_fixed_rho, fixed_h=opt_fixed_h)
+
                 st.session_state['opt_success_msg'] = f"Optimización finalizada. RMSE: {rmse:.2f} | R²: {r2:.4f}"
                 st.rerun()
             except Exception as e:

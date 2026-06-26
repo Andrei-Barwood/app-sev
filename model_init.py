@@ -179,26 +179,5 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     )
 
 
-def apply_model_init_to_session(init: ModelInitResult, st_session) -> None:
-    st_session.rho = list(init.rho)
-    st_session.h = list(init.h)
-    st_session.fixed_rho = [False] * init.n_layers
-    st_session.fixed_h = [False] * max(init.n_layers - 1, 0)
-    st_session.model_init_report = {
-        "curve_type": init.curve_type,
-        "mooney_key": init.mooney_key,
-        "coherence_score": init.coherence_score,
-        "init_rmse": init.init_rmse,
-        "init_r2": init.init_r2,
-        "use_global_search": init.use_global_search,
-        "notes": init.notes,
-        "rho": init.rho,
-        "h": init.h,
-    }
-    for key in list(st_session.keys()):
-        if key.startswith(("rho_", "h_", "frho_", "fh_")):
-            del st_session[key]
-
-
 def build_data_signature(filename: str, col_l: str, col_rho: str) -> str:
     return f"{filename}|{col_l}|{col_rho}"
