@@ -26,6 +26,12 @@ from sev_import import (
 )
 from model_init import build_data_signature, estimate_initial_model
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
+from sev_metrics import (
+    ACCEPTANCE_ERROR_PCT,
+    assess_fit,
+    log_axis_ticks,
+    style_results_table,
+)
 from layer_state import (
     apply_model_init_to_session,
     bump_layer_widget_generation,
@@ -411,14 +417,16 @@ elif nav == "⚡ Herramienta SEV":
         if 'opt_success_msg' in st.session_state:
             st.success(st.session_state['opt_success_msg'])
             del st.session_state['opt_success_msg']
+        if 'opt_rejected_msg' in st.session_state:
+            st.error(st.session_state['opt_rejected_msg'])
+            del st.session_state['opt_rejected_msg']
         if 'opt_error_msg' in st.session_state:
             st.error(st.session_state['opt_error_msg'])
             del st.session_state['opt_error_msg']
         if st.session_state.pop('opt_fit_warning', False):
             st.warning(
-                "El modelo de capas no puede coincidir perfectamente con todos los puntos. "
-                "La línea azul es la respuesta **teórica** del suelo modelado, no una copia del CSV. "
-                "Con datos de alto contraste el R² suele quedar entre 0.65 y 0.75 aunque el ajuste sea el mejor posible."
+                "El modelo 1D no alcanzó el criterio de aceptación (≤5 % en todos los puntos). "
+                "Revisa columnas, número de capas o la calidad de las mediciones en campo."
             )
             
         st.markdown("---")
@@ -507,17 +515,39 @@ elif nav == "⚡ Herramienta SEV":
                     fixed_rho=[False] * n_best,
                     fixed_h=[False] * max(n_best - 1, 0),
                 )
-
-                msg = f"Optimización finalizada ({n_best} capas). RMSE: {rmse:.2f} | R²: {r2:.4f}"
-                if r2 < 0.75:
-                    msg += (
-                        " · Ajuste limitado: curvas con ρ máx/ρ mín > 80 (como 339→0.39 Ω·m) "
-                        "no siempre se reproducen al 100% con un modelo 1D. "
-                        "Verifica columnas L=AB/2 y ρ medida."
+                rho_opt = calc_rho_a(L_med, best_rho, best_h)
+                fit = assess_fit(L_med, rho_med, rho_opt)
+                st.session_state["last_fit_report"] = {
+                    "accepted": fit.accepted,
+                    "mean_error_pct": fit.mean_error_pct,
+                    "max_error_pct": fit.max_error_pct,
+                    "n_over_threshold": fit.n_over_threshold,
+                    "n_points": fit.n_points,
+                    "r2_log": fit.r2_log,
+                    "rmse_linear": fit.rmse_linear,
+                    "n_layers": n_best,
+                }
+                summary = (
+                    f"{n_best} capas · RMSE {fit.rmse_linear:.2f} Ω·m · "
+                    f"R²(log) {fit.r2_log:.4f} · Error prom. {fit.mean_error_pct:.2f} % · "
+                    f"Máx {fit.max_error_pct:.2f} %"
+                )
+                if fit.accepted and fit.strict_accepted:
+                    st.session_state["opt_success_msg"] = (
+                        f"Ajuste ACEPTADO (promedio y todos los puntos ≤ {ACCEPTANCE_ERROR_PCT:.0f} %). {summary}"
                     )
-                st.session_state['opt_success_msg'] = msg
-                if r2 < 0.75:
-                    st.session_state['opt_fit_warning'] = True
+                elif fit.accepted:
+                    st.session_state["opt_success_msg"] = (
+                        f"Ajuste ACEPTADO con reservas: promedio ≤ {ACCEPTANCE_ERROR_PCT:.0f} %, "
+                        f"pero {fit.n_over_threshold} punto(s) lo superan. {summary}"
+                    )
+                    st.session_state["opt_fit_warning"] = True
+                else:
+                    st.session_state["opt_rejected_msg"] = (
+                        f"Ajuste RECHAZADO: error promedio {fit.mean_error_pct:.2f} % "
+                        f"> {ACCEPTANCE_ERROR_PCT:.0f} % permitido. {summary}"
+                    )
+                    st.session_state["opt_fit_warning"] = True
                 st.rerun()
             except Exception as e:
                 st.session_state['opt_error_msg'] = f"Error en la optimización: {e}"
@@ -548,6 +578,8 @@ elif nav == "⚡ Herramienta SEV":
     chart_title = "Curva de Sondeo Eléctrico Vertical"
     if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
         chart_title = f"Curva SEV — {active_dataset['filename']}"
+    x_ticks = log_axis_ticks(L_med)
+    y_ticks = log_axis_ticks(np.concatenate([rho_med, rho_calc, rho_smooth]))
     fig.update_layout(
         title=chart_title,
         xaxis_title='Distancia L (AB/2) [m]',
@@ -560,8 +592,20 @@ elif nav == "⚡ Herramienta SEV":
         height=500,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    fig.update_xaxes(gridcolor='#EAEEF4', zerolinecolor='#A7B7CF')
-    fig.update_yaxes(gridcolor='#EAEEF4', zerolinecolor='#A7B7CF')
+    fig.update_xaxes(
+        gridcolor='#EAEEF4',
+        zerolinecolor='#A7B7CF',
+        tickmode="array",
+        tickvals=x_ticks,
+        ticktext=[f"{t:g}" for t in x_ticks],
+    )
+    fig.update_yaxes(
+        gridcolor='#EAEEF4',
+        zerolinecolor='#A7B7CF',
+        tickmode="array",
+        tickvals=y_ticks,
+        ticktext=[f"{t:g}" for t in y_ticks],
+    )
     st.plotly_chart(fig, width="stretch")
     if data_source != "Generar teóricos":
         st.caption(
@@ -573,19 +617,49 @@ elif nav == "⚡ Herramienta SEV":
         st.caption(f"Curva teórica generada ({len(L_med)} puntos). Fuente: {data_source}.")
     # === TABLA DE RESULTADOS ===
     st.subheader("Resultados y Error")
-    df_results = pd.DataFrame({
-        'L (AB/2) [m]': L_med,
-        'Rho Medido [Ω·m]': rho_med,
-        'Rho Calculado [Ω·m]': rho_calc,
-    })
-    df_results['Error (%)'] = np.abs((df_results['Rho Medido [Ω·m]'] - df_results['Rho Calculado [Ω·m]']) / df_results['Rho Medido [Ω·m]']) * 100
+    fit_report = assess_fit(L_med, rho_med, rho_calc)
+    df_results = fit_report.results_df
     st.session_state['sev_results_df'] = df_results
-    col_m1, col_m2, col_m3 = st.columns(3)
-    rmse_current = np.sqrt(np.mean((rho_med - rho_calc)**2))
-    col_m1.metric("RMSE Actual", f"{rmse_current:.2f}")
-    col_m2.metric("Error Promedio", f"{df_results['Error (%)'].mean():.2f} %")
-    col_m3.metric("Error Máximo", f"{df_results['Error (%)'].max():.2f} %")
-    st.dataframe(df_results.style.format("{:.2f}"))
+
+    if fit_report.accepted and fit_report.strict_accepted:
+        st.success(
+            f"Ajuste ACEPTADO: error promedio {fit_report.mean_error_pct:.2f} % "
+            f"(≤ {ACCEPTANCE_ERROR_PCT:.0f} %) y los {fit_report.n_points} puntos cumplen."
+        )
+    elif fit_report.accepted:
+        st.warning(
+            f"Ajuste ACEPTADO con reservas: promedio {fit_report.mean_error_pct:.2f} % "
+            f"(≤ {ACCEPTANCE_ERROR_PCT:.0f} %), pero {fit_report.n_over_threshold} punto(s) lo superan "
+            f"(máximo {fit_report.max_error_pct:.2f} %)."
+        )
+    else:
+        st.error(
+            f"Ajuste RECHAZADO: error promedio {fit_report.mean_error_pct:.2f} % "
+            f"supera el {ACCEPTANCE_ERROR_PCT:.0f} % permitido "
+            f"(máximo {fit_report.max_error_pct:.2f} %, "
+            f"{fit_report.n_over_threshold}/{fit_report.n_points} puntos fuera de tolerancia)."
+        )
+
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    col_m1.metric("RMSE (Ω·m)", f"{fit_report.rmse_linear:.2f}")
+    col_m2.metric("R² en escala log", f"{fit_report.r2_log:.4f}")
+    col_m3.metric(
+        f"Error prom. (≤{ACCEPTANCE_ERROR_PCT:.0f}%)",
+        f"{fit_report.mean_error_pct:.2f} %",
+        delta=f"{fit_report.mean_error_pct - ACCEPTANCE_ERROR_PCT:.2f} %",
+        delta_color="inverse" if fit_report.mean_error_pct > ACCEPTANCE_ERROR_PCT else "normal",
+    )
+    col_m4.metric(
+        "Error máximo",
+        f"{fit_report.max_error_pct:.2f} %",
+        delta=f"{fit_report.max_error_pct - ACCEPTANCE_ERROR_PCT:.2f} %",
+        delta_color="inverse",
+    )
+    st.caption(
+        "Verde en la tabla = punto dentro del 5 % · Rojo = fuera de tolerancia. "
+        "«Error log (%)» complementa la lectura en curvas log-log."
+    )
+    st.dataframe(style_results_table(df_results), width="stretch")
     # === EXPORTAR ===
     st.subheader("Exportar Resultados")
     col_e1, col_e2 = st.columns(2)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from scipy.optimize import differential_evolution, least_squares
 from core import calc_rho_a
@@ -98,6 +100,8 @@ def _alternate_layer_configs(
     initial_h: list[float],
     fixed_rho: list[bool],
     fixed_h: list[bool],
+    *,
+    rho_med: np.ndarray | None = None,
 ) -> list[tuple[list[float], list[float], list[bool], list[bool]]]:
     configs: list[tuple[list[float], list[float], list[bool], list[bool]]] = [
         (list(initial_rho), list(initial_h), list(fixed_rho), list(fixed_h))
@@ -113,6 +117,25 @@ def _alternate_layer_configs(
                 [False],
             )
         )
+        if rho_med is not None:
+            rho_arr = np.asarray(rho_med, dtype=float)
+            contrast = float(np.max(rho_arr) / max(float(np.min(rho_arr)), 1e-3))
+            if contrast > 80:
+                r1 = float(np.max(rho_arr))
+                r4 = float(np.min(rho_arr))
+                r2 = max(0.01, float(np.sqrt(r1 * r4)))
+                r3 = max(0.01, float(np.exp((np.log(r1) + 2 * np.log(r4)) / 3)))
+                h1 = max(0.001, mid_h * 0.1)
+                h2 = max(0.01, mid_h * 0.5)
+                h3 = max(0.1, mid_h * 2.0)
+                configs.append(
+                    (
+                        [r1, r2, r3, r4],
+                        [h1, h2, h3],
+                        [False, False, False, False],
+                        [False, False, False],
+                    )
+                )
     elif n_layers == 2:
         mid_rho = max(0.1, float(np.sqrt(initial_rho[0] * initial_rho[-1])))
         h1 = float(initial_h[0]) if initial_h else 1.0
@@ -219,7 +242,13 @@ def run_optimization(
     Los parámetros libres se optimizan en escala log10 para estabilidad numérica.
     """
     configs = (
-        _alternate_layer_configs(initial_rho, initial_h, fixed_rho, fixed_h)
+        _alternate_layer_configs(
+            initial_rho,
+            initial_h,
+            fixed_rho,
+            fixed_h,
+            rho_med=np.asarray(rho_med, dtype=float),
+        )
         if try_alternate_layers
         else [(initial_rho, initial_h, fixed_rho, fixed_h)]
     )
