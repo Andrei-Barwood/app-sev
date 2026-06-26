@@ -27,7 +27,12 @@ from sev_import import (
     parse_sev_upload,
 )
 from sev_feasibility import assess_feasibility
-from model_init import build_data_signature, build_initial_model_for_layers, estimate_initial_model
+from model_init import (
+    build_data_signature,
+    build_initial_model_for_layers,
+    build_manual_data_signature,
+    estimate_initial_model,
+)
 from sev_geometry import inspect_electrode_geometry
 from sev_report import build_sev_pdf_report
 from sev_data import clear_active_dataset, get_active_dataset, get_active_L_rho, store_active_dataset
@@ -289,17 +294,37 @@ elif nav == "⚡ Herramienta SEV":
                 manual_result = parse_manual_sev_text(manual_data)
                 for warning in manual_result.warnings:
                     st.warning(warning)
-                st.caption(
-                    f"Interpretado: {manual_result.n_lines_parsed} puntos "
-                    f"({manual_result.format_detected})."
+                feasibility_manual = assess_feasibility(
+                    manual_result.L_med, manual_result.rho_med
                 )
+                if feasibility_manual.level == "success":
+                    st.success(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+                elif feasibility_manual.level == "error":
+                    st.error(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+                else:
+                    st.warning(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+
+                preview = pd.DataFrame({
+                    "L (AB/2) [m]": manual_result.L_med,
+                    "ρ medida [Ω·m]": manual_result.rho_med,
+                })
+                with st.expander(
+                    f"Vista previa interpretada ({manual_result.n_lines_parsed} puntos, "
+                    f"{manual_result.format_detected})",
+                    expanded=bool(manual_result.warnings),
+                ):
+                    st.dataframe(preview, width="stretch", hide_index=True)
+
                 store_active_dataset(
                     st.session_state,
                     manual_result.L_med,
                     manual_result.rho_med,
                     source=data_source,
+                    feasibility=feasibility_manual,
+                    manual_warnings=manual_result.warnings,
+                    manual_format=manual_result.format_detected,
                 )
-                manual_sig = f"manual|{manual_result.n_lines_parsed}|{manual_result.format_detected}|{float(manual_result.L_med[0])}"
+                manual_sig = build_manual_data_signature(manual_data)
                 if st.session_state.get("sev_data_signature") != manual_sig:
                     st.session_state["sev_data_signature"] = manual_sig
                     model_init = estimate_initial_model(
@@ -564,6 +589,31 @@ elif nav == "⚡ Herramienta SEV":
 
         st.markdown("---")
 
+    if data_source == "Ingreso manual":
+        st.subheader("Ingreso manual — datos interpretados")
+        st.caption(
+            "El gráfico usa exactamente la tabla interpretada abajo. "
+            "Si ves zigzags, revisa el formato (solo `L, ρ` o filas completas del telurómetro)."
+        )
+        manual_warnings = active_dataset.get("manual_warnings") or []
+        feasibility_manual = active_dataset.get("feasibility")
+        if feasibility_manual is not None:
+            if feasibility_manual.level == "success":
+                st.success(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+            elif feasibility_manual.level == "error":
+                st.error(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+            else:
+                st.warning(f"**{feasibility_manual.title}:** {feasibility_manual.message}")
+        if manual_warnings:
+            for warning in manual_warnings:
+                st.warning(warning)
+        st.dataframe(
+            pd.DataFrame({"L (AB/2) [m]": L_med, "ρ medida [Ω·m]": rho_med}),
+            width="stretch",
+            hide_index=True,
+        )
+        st.markdown("---")
+
     if run_opt:
         with st.spinner("Optimizando modelo... (esto puede tardar unos segundos)"):
             try:
@@ -638,13 +688,19 @@ elif nav == "⚡ Herramienta SEV":
         measured_label = "Datos medidos"
         if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
             measured_label = f"Datos medidos ({active_dataset['filename']})"
-        fig.add_trace(go.Scatter(
+        elif data_source == "Ingreso manual":
+            measured_label = f"Datos manuales ({len(L_med)} puntos)"
+        manual_warn = bool(active_dataset.get("manual_warnings"))
+        marker_mode = "markers" if manual_warn else "markers+lines"
+        trace_kw = dict(
             x=L_med, y=rho_med,
-            mode="markers+lines",
+            mode=marker_mode,
             name=measured_label,
             marker=dict(color="#FFB000", size=9, line=dict(color="#63627C", width=1)),
-            line=dict(color="#A7B7CF", width=1, dash="dot"),
-        ))
+        )
+        if marker_mode == "markers+lines":
+            trace_kw["line"] = dict(color="#A7B7CF", width=1, dash="dot")
+        fig.add_trace(go.Scatter(**trace_kw))
     L_smooth = np.logspace(np.log10(min(L_med)), np.log10(max(L_med)), 100)
     rho_smooth = calc_rho_a(L_smooth, st.session_state.rho, st.session_state.h)
     fig.add_trace(go.Scatter(
@@ -656,6 +712,8 @@ elif nav == "⚡ Herramienta SEV":
     chart_title = "Curva de Sondeo Eléctrico Vertical"
     if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
         chart_title = f"Curva SEV — {active_dataset['filename']}"
+    elif data_source == "Ingreso manual":
+        chart_title = "Curva SEV — ingreso manual"
     x_ticks = log_axis_ticks(L_med)
     y_ticks = log_axis_ticks(np.concatenate([rho_med, rho_calc, rho_smooth]))
     fig.update_layout(

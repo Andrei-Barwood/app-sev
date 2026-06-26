@@ -20,6 +20,8 @@ def store_active_dataset(
     assessments=None,
     feasibility=None,
     reference_benchmark=None,
+    manual_warnings=None,
+    manual_format: str = "",
 ) -> None:
     L_arr = np.asarray(L_med, dtype=float).copy()
     rho_arr = np.asarray(rho_med, dtype=float).copy()
@@ -35,6 +37,9 @@ def store_active_dataset(
         "col_l": col_l,
         "col_rho": col_rho,
         "n_points": int(len(L_arr)),
+        "feasibility": feasibility,
+        "manual_warnings": list(manual_warnings or []),
+        "manual_format": manual_format,
     }
 
     if source == "Cargar archivo (CSV/Excel)":
@@ -77,3 +82,11 @@ def clear_active_dataset(st_session: Any) -> None:
     st_session.pop("sev_import_panel", None)
     st_session.pop("sev_data_signature", None)
     st_session.pop("model_init_report", None)
+    for key in (
+        "opt_success_msg",
+        "opt_rejected_msg",
+        "opt_error_msg",
+        "opt_fit_warning",
+        "last_fit_report",
+    ):
+        st_session.pop(key, None)

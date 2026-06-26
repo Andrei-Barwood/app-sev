@@ -266,3 +266,11 @@ def build_initial_model_for_layers(L: np.ndarray, rho: np.ndarray, n_layers: int
 
 def build_data_signature(filename: str, col_l: str, col_rho: str) -> str:
     return f"{filename}|{col_l}|{col_rho}"
+
+
+def build_manual_data_signature(text: str) -> str:
+    import hashlib
+
+    normalized = "\n".join(line.strip() for line in text.strip().splitlines() if line.strip())
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"manual|{digest}"
