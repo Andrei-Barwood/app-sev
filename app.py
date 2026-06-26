@@ -32,6 +32,7 @@ from model_init import (
     build_initial_model_for_layers,
     build_manual_data_signature,
     estimate_initial_model,
+    resolve_initial_model,
 )
 from sev_geometry import inspect_electrode_geometry
 from sev_report import build_sev_pdf_report
@@ -260,7 +261,7 @@ elif nav == "⚡ Herramienta SEV":
                     if st.session_state.get("sev_data_signature") != data_signature:
                         st.session_state["sev_data_signature"] = data_signature
                         if not has_column_errors:
-                            model_init = estimate_initial_model(L_med, rho_med)
+                            model_init = resolve_initial_model(L_med, rho_med)
                             apply_model_init_to_session(model_init, st.session_state)
                             st.session_state["auto_optimize_global"] = model_init.use_global_search
                         else:
@@ -327,7 +328,7 @@ elif nav == "⚡ Herramienta SEV":
                 manual_sig = build_manual_data_signature(manual_data)
                 if st.session_state.get("sev_data_signature") != manual_sig:
                     st.session_state["sev_data_signature"] = manual_sig
-                    model_init = estimate_initial_model(
+                    model_init = resolve_initial_model(
                         manual_result.L_med, manual_result.rho_med
                     )
                     apply_model_init_to_session(model_init, st.session_state)
@@ -388,7 +389,7 @@ elif nav == "⚡ Herramienta SEV":
                         st.caption(f"• {note}")
             with recalc_cols[1]:
                 if st.button("Recalcular desde CSV", key="btn_recalc_csv", help="Vuelve a estimar ρ y h a partir de la tabla importada"):
-                    model_init = estimate_initial_model(np.asarray(L_med), np.asarray(rho_med))
+                    model_init = resolve_initial_model(np.asarray(L_med), np.asarray(rho_med))
                     apply_model_init_to_session(model_init, st.session_state)
                     st.session_state["auto_optimize_global"] = model_init.use_global_search
                     st.rerun()
@@ -489,10 +490,25 @@ elif nav == "⚡ Herramienta SEV":
                 "Curva difícil detectada: se recomienda **Búsqueda Global** "
                 "(contraste alto o forma compleja en los datos importados)."
             )
+        strict_mode = st.checkbox(
+            "Modo estricto (todos los puntos ≤ 5 %)",
+            value=bool(st.session_state.get("opt_strict_mode", False)),
+            key="opt_strict_mode_cb",
+            help=(
+                "Prioriza reducir el error punto a punto, no solo el promedio. "
+                "Recomendado con búsqueda global en curvas exigentes."
+            ),
+        )
+        st.session_state["opt_strict_mode"] = strict_mode
+        if strict_mode:
+            st.caption(
+                "Modo estricto activo: el optimizador penaliza cada punto fuera del 5 %. "
+                "El veredicto final sigue siendo error **promedio** ≤ 5 %."
+            )
         opt_method = st.radio(
             "Método de Ajuste:",
             ["Refinamiento Local (Recomendado)", "Búsqueda Global (Automático)"],
-            index=1 if difficult_curve else 0,
+            index=1 if (difficult_curve or strict_mode) else 0,
             key="opt_method_radio",
             help="El Refinamiento Local usa los valores actuales del modelo de capas. La Búsqueda Global explora un rango más amplio.",
         )
@@ -634,6 +650,8 @@ elif nav == "⚡ Herramienta SEV":
                     opt_fixed_h,
                     use_global=use_global,
                     try_alternate_layers=True,
+                    strict_mode=strict_mode,
+                    threshold_pct=ACCEPTANCE_ERROR_PCT,
                 )
                 n_best = len(best_rho)
                 set_layer_model(
@@ -709,6 +727,35 @@ elif nav == "⚡ Herramienta SEV":
         name='Modelo de capas (teórico)',
         line=dict(color='#485199', width=3)
     ))
+    ref_bench_plot = None
+    show_ref_csv_curve = False
+    if st.session_state.get("sev_import_panel"):
+        ref_bench_plot = st.session_state["sev_import_panel"].get("reference_benchmark")
+    if (
+        ref_bench_plot is not None
+        and ref_bench_plot.get("rho_calc_aligned") is not None
+        and np.any(np.isfinite(ref_bench_plot["rho_calc_aligned"]))
+    ):
+        show_ref_csv_curve = st.checkbox(
+            f"Mostrar curva del archivo (`{ref_bench_plot['col_calc']}`)",
+            value=True,
+            key="show_ref_csv_curve",
+            help=(
+                "Curva calculada por el telurómetro u otro software en el CSV. "
+                "No es el modelo de capas de esta app; sirve solo como referencia visual."
+            ),
+        )
+        if show_ref_csv_curve:
+            rho_ref = np.asarray(ref_bench_plot["rho_calc_aligned"], dtype=float)
+            mask = np.isfinite(rho_ref) & (rho_ref > 0)
+            fig.add_trace(go.Scatter(
+                x=L_med[mask],
+                y=rho_ref[mask],
+                mode="markers+lines",
+                name=f"Referencia CSV ({ref_bench_plot['col_calc']})",
+                marker=dict(color="#7B68A6", size=7, symbol="diamond"),
+                line=dict(color="#C4B5D8", width=1, dash="dash"),
+            ))
     chart_title = "Curva de Sondeo Eléctrico Vertical"
     if data_source == "Cargar archivo (CSV/Excel)" and active_dataset.get("filename"):
         chart_title = f"Curva SEV — {active_dataset['filename']}"
@@ -744,10 +791,17 @@ elif nav == "⚡ Herramienta SEV":
     )
     st.plotly_chart(fig, width="stretch")
     if data_source != "Generar teóricos":
+        ref_note = ""
+        if show_ref_csv_curve and ref_bench_plot is not None:
+            ref_note = (
+                f" **Violeta** = `{ref_bench_plot['col_calc']}` del archivo "
+                f"(referencia del telurómetro, no el ajuste de esta app)."
+            )
         st.caption(
             f"**Amarillo** = {len(L_med)} puntos medidos en campo "
             f"(ρ {float(np.max(rho_med)):.2g}→{float(np.min(rho_med)):.2g} Ω·m). "
             f"**Azul** = respuesta teórica del modelo de capas (no es otra lectura del archivo)."
+            f"{ref_note}"
         )
     else:
         st.caption(f"Curva teórica generada ({len(L_med)} puntos). Fuente: {data_source}.")

@@ -25,7 +25,7 @@ Herramienta profesional para el modelado y ajuste automático de curvas de Sonde
 
 ## Descarga (binarios standalone)
 
-**Versión actual: [v1.2.2](https://github.com/Andrei-Barwood/app-sev/releases/tag/v1.2.2)**
+**Versión actual: [v1.2.3](https://github.com/Andrei-Barwood/app-sev/releases/tag/v1.2.3)**
 
 En [Releases](https://github.com/Andrei-Barwood/app-sev/releases) están los ejecutables listos para usar, sin instalar Python ni dependencias:
 
@@ -35,9 +35,9 @@ En [Releases](https://github.com/Andrei-Barwood/app-sev/releases) están los eje
 | **macOS** | `app-sev-macos.zip` |
 | **Linux** | `app-sev-linux.tar.gz` |
 
-> **Versiones anteriores ya no se publican.** Descarga siempre **v1.2.2**; es el mismo servicio (SEV + malla BT), con importación, optimización, modelo de capas y exportación AutoCAD corregidos.
+> **Versiones anteriores ya no se publican.** Descarga siempre **v1.2.3**; es el mismo servicio (SEV + malla BT), con importación, optimización, modelo de capas y exportación AutoCAD corregidos.
 
-1. Descarga el archivo de **v1.2.2** para tu sistema operativo.
+1. Descarga el archivo de **v1.2.3** para tu sistema operativo.
 2. Descomprime el archivo.
 
 **Windows — ejecutar antes del binario:**

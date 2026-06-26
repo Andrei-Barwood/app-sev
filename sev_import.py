@@ -517,6 +517,19 @@ def extract_reference_benchmark(
     else:
         ref_errors = np.abs((work[col_rho] - work[col_calc]) / work[col_rho]) * 100.0
 
+    L_med_arr = np.asarray(L_med, dtype=float)
+    rho_calc_aligned = np.full(len(L_med_arr), np.nan, dtype=float)
+    L_ref = work[col_l].to_numpy(dtype=float)
+    rho_ref = work[col_calc].to_numpy(dtype=float)
+    for i, l_val in enumerate(L_med_arr):
+        diffs = np.abs(L_ref - l_val)
+        j = int(np.argmin(diffs))
+        if diffs[j] <= max(1e-6, abs(l_val) * 1e-4):
+            rho_calc_aligned[i] = rho_ref[j]
+
+    if not np.any(np.isfinite(rho_calc_aligned)):
+        return None
+
     return {
         "col_calc": col_calc,
         "col_error": col_err,
@@ -524,7 +537,9 @@ def extract_reference_benchmark(
         "max_error_pct": float(np.max(ref_errors)),
         "n_over_5pct": int(np.sum(ref_errors > 5.0)),
         "n_points": int(len(ref_errors)),
-        "rho_calc": work[col_calc].to_numpy(dtype=float),
+        "rho_calc": rho_ref,
+        "L_vals": L_ref,
+        "rho_calc_aligned": rho_calc_aligned,
         "errors_pct": ref_errors,
     }
 

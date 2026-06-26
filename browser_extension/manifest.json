@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Sondeo Eléctrico Vertical (SEV)",
-    "version": "1.0",
+    "version": "1.2.3",
     "description": "Lanzador de acceso rápido para la aplicación web de interpretación SEV. Desarrollo: Kirtan Teg Singh. Propietario: snocomm.",
     "action": {
       "default_icon": {

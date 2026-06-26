@@ -222,6 +222,27 @@ def estimate_initial_model(L: np.ndarray, rho: np.ndarray) -> ModelInitResult:
     )
 
 
+def resolve_initial_model(
+    L: np.ndarray,
+    rho: np.ndarray,
+    *,
+    auto_expand_layers: bool = True,
+) -> ModelInitResult:
+    """Inicializa el modelo; expande a más capas automáticamente en curvas difíciles."""
+    base = estimate_initial_model(L, rho)
+    if not auto_expand_layers:
+        return base
+    contrast = float(np.max(rho) / max(float(np.min(rho)), 1e-3))
+    target = int(base.recommended_n_layers)
+    if target > base.n_layers and (contrast > 120 or base.use_global_search):
+        expanded = build_initial_model_for_layers(L, rho, target)
+        expanded.notes.append(
+            f"Inicialización automática con {target} capas (curva de alto contraste)."
+        )
+        return expanded
+    return base
+
+
 def build_initial_model_for_layers(L: np.ndarray, rho: np.ndarray, n_layers: int) -> ModelInitResult:
     """Construye un modelo inicial para un número de capas solicitado (p. ej. 4)."""
     base = estimate_initial_model(L, rho)

@@ -118,6 +118,22 @@ jobs:
         if: github.ref_name == 'v1.2.2'
         run: cp docs/release_notes_v1.2.2.md release_notes.md
 
+      - name: Prepare release notes (v1.2.3)
+        if: github.ref_name == 'v1.2.3'
+        run: cp docs/release_notes_v1.2.3.md release_notes.md
+
+      - name: Create GitHub Release (v1.2.3)
+        if: github.ref_name == 'v1.2.3'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          tag_name: ${{ github.ref_name }}
+          name: v1.2.3 — Modo estricto, referencia CSV y auto-capas
+          body_path: release_notes.md
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create GitHub Release (v1.2.2)
         if: github.ref_name == 'v1.2.2'
         uses: softprops/action-gh-release@v2
@@ -155,7 +171,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
-        if: github.ref_name != 'v1.1.1' && github.ref_name != 'v1.2.0' && github.ref_name != 'v1.2.1' && github.ref_name != 'v1.2.2'
+        if: github.ref_name != 'v1.1.1' && github.ref_name != 'v1.2.0' && github.ref_name != 'v1.2.1' && github.ref_name != 'v1.2.2' && github.ref_name != 'v1.2.3'
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*

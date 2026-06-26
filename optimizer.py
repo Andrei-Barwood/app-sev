@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import differential_evolution, least_squares
 from core import calc_rho_a
+from sev_metrics import ACCEPTANCE_ERROR_PCT, linear_error_pct
 
 
 def _data_driven_bounds(
@@ -48,6 +49,11 @@ def _safe_log10(values: np.ndarray) -> np.ndarray:
     return np.log10(np.maximum(values, 1e-6))
 
 
+def _strict_penalty(rho_med: np.ndarray, rho_calc: np.ndarray, threshold_pct: float) -> np.ndarray:
+    err_lin = linear_error_pct(rho_med, rho_calc)
+    return np.maximum(0.0, err_lin - threshold_pct) / max(threshold_pct, 1e-6)
+
+
 def _objective_mse_log(
     free_values: np.ndarray,
     L_med: np.ndarray,
@@ -55,12 +61,19 @@ def _objective_mse_log(
     n_layers: int,
     fixed_mask: np.ndarray,
     fixed_values: np.ndarray,
+    *,
+    strict_mode: bool = False,
+    threshold_pct: float = ACCEPTANCE_ERROR_PCT,
 ) -> float:
     params = _merge_free_params(free_values, fixed_mask, fixed_values)
     rho = params[:n_layers]
     h = params[n_layers:]
     rho_calc = calc_rho_a(L_med, rho, h)
-    return float(np.mean((_safe_log10(rho_med) - _safe_log10(rho_calc)) ** 2))
+    mse_log = float(np.mean((_safe_log10(rho_med) - _safe_log10(rho_calc)) ** 2))
+    if not strict_mode:
+        return mse_log
+    penalty = _strict_penalty(rho_med, rho_calc, threshold_pct)
+    return mse_log + 8.0 * float(np.mean(penalty**2)) + 2.0 * float(np.max(penalty) ** 2)
 
 
 def _residuals_log(
@@ -70,12 +83,19 @@ def _residuals_log(
     n_layers: int,
     fixed_mask: np.ndarray,
     fixed_values: np.ndarray,
+    *,
+    strict_mode: bool = False,
+    threshold_pct: float = ACCEPTANCE_ERROR_PCT,
 ) -> np.ndarray:
     params = _merge_free_params(free_values, fixed_mask, fixed_values)
     rho = params[:n_layers]
     h = params[n_layers:]
     rho_calc = calc_rho_a(L_med, rho, h)
-    return _safe_log10(rho_calc) - _safe_log10(rho_med)
+    log_res = _safe_log10(rho_calc) - _safe_log10(rho_med)
+    if not strict_mode:
+        return log_res
+    penalty = _strict_penalty(rho_med, rho_calc, threshold_pct)
+    return np.concatenate([log_res, penalty * 4.0])
 
 
 def _linear_to_log_bounds(lower: np.ndarray, upper: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -93,6 +113,24 @@ def _fit_metrics(L_med, rho_med, rho_model, h_model) -> tuple[float, float]:
     ss_tot = float(np.sum((_safe_log10(rho_med) - np.mean(_safe_log10(rho_med))) ** 2))
     r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
     return rmse, r2
+
+
+def _strict_rank(
+    L_med: np.ndarray,
+    rho_med: np.ndarray,
+    rho_model: list[float],
+    h_model: list[float],
+    threshold_pct: float,
+) -> tuple[int, float, float, float]:
+    rho_calc = calc_rho_a(L_med, rho_model, h_model)
+    err = linear_error_pct(rho_med, rho_calc)
+    over = int(np.sum(err > threshold_pct))
+    return (
+        over,
+        float(np.max(err)),
+        float(np.mean(err)),
+        -_fit_metrics(L_med, rho_med, rho_model, h_model)[1],
+    )
 
 
 def _alternate_layer_configs(
@@ -186,6 +224,9 @@ def _optimize_single_configuration(
     fixed_rho,
     fixed_h,
     use_global: bool = False,
+    *,
+    strict_polish: bool = False,
+    threshold_pct: float = ACCEPTANCE_ERROR_PCT,
 ):
     n_layers = len(initial_rho)
     initial_params = np.concatenate([initial_rho, initial_h])
@@ -216,7 +257,12 @@ def _optimize_single_configuration(
         for seed in seeds:
             result_global = differential_evolution(
                 lambda x: _objective_mse_log(
-                    _log_to_linear(x), L_med, rho_med, n_layers, fixed_mask, fixed_values
+                    _log_to_linear(x),
+                    L_med,
+                    rho_med,
+                    n_layers,
+                    fixed_mask,
+                    fixed_values,
                 ),
                 bounds=bounds_log,
                 strategy="best1bin",
@@ -237,7 +283,14 @@ def _optimize_single_configuration(
 
     result_local = least_squares(
         lambda x: _residuals_log(
-            _log_to_linear(x), L_med, rho_med, n_layers, fixed_mask, fixed_values
+            _log_to_linear(x),
+            L_med,
+            rho_med,
+            n_layers,
+            fixed_mask,
+            fixed_values,
+            strict_mode=strict_polish,
+            threshold_pct=threshold_pct,
         ),
         x0=x0_log,
         bounds=(free_lower_log, free_upper_log),
@@ -264,6 +317,9 @@ def run_optimization(
     fixed_h,
     use_global=False,
     try_alternate_layers: bool = False,
+    *,
+    strict_mode: bool = False,
+    threshold_pct: float = ACCEPTANCE_ERROR_PCT,
 ):
     """
     Ejecuta el proceso de optimización en dos pasos.
@@ -293,9 +349,47 @@ def run_optimization(
             fr_cfg,
             fh_cfg,
             use_global=use_global,
+            strict_polish=False,
+            threshold_pct=threshold_pct,
         )
-        if best_result is None or result[3] > best_result[3]:
+        if best_result is None:
             best_result = result
-    return best_result if best_result is not None else _optimize_single_configuration(
-        L_med, rho_med, initial_rho, initial_h, fixed_rho, fixed_h, use_global=use_global
-    )
+            continue
+        if strict_mode:
+            rank_new = _strict_rank(L_med, rho_med, result[0], result[1], threshold_pct)
+            rank_best = _strict_rank(L_med, rho_med, best_result[0], best_result[1], threshold_pct)
+            if rank_new < rank_best:
+                best_result = result
+        elif result[3] > best_result[3]:
+            best_result = result
+    if best_result is None:
+        best_result = _optimize_single_configuration(
+            L_med,
+            rho_med,
+            initial_rho,
+            initial_h,
+            fixed_rho,
+            fixed_h,
+            use_global=use_global,
+            strict_polish=False,
+            threshold_pct=threshold_pct,
+        )
+
+    if strict_mode and best_result is not None:
+        polished = _optimize_single_configuration(
+            L_med,
+            rho_med,
+            best_result[0],
+            best_result[1],
+            fixed_rho,
+            fixed_h,
+            use_global=False,
+            strict_polish=True,
+            threshold_pct=threshold_pct,
+        )
+        if _strict_rank(L_med, rho_med, polished[0], polished[1], threshold_pct) < _strict_rank(
+            L_med, rho_med, best_result[0], best_result[1], threshold_pct
+        ):
+            best_result = polished
+
+    return best_result
